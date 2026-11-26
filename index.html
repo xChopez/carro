@@ -162,6 +162,17 @@
         <input type="text" id="routeName" placeholder="Nombre (ej. pista 1)" maxlength="30">
         <button id="btnSave">Guardar ruta</button>
       </div>
+      <p class="hint">Si el carro no contesta con sus encoders, cada paso se guarda por tiempo (⏱) y se repite igual: misma dirección el mismo tiempo.</p>
+    </div>
+
+    <div class="card">
+      <h2>Ruta dentro del carro</h2>
+      <p class="hint">El carro la graba él solo con sus encoders y el IMU (no necesita que conteste). Graba → maneja con las flechas → Terminar → Repetir. Se borra al apagar el carro.</p>
+      <div class="row btns">
+        <button id="btnCarG">● Grabar en el carro</button>
+        <button id="btnCarE">Terminar</button>
+        <button id="btnCarP" class="go">▶ Repetir en el carro</button>
+      </div>
     </div>
   </section>
 
@@ -268,6 +279,8 @@ let route = load("carro_ruta_actual", []);
 let saved = load("carro_rutas", {});
 let moving = null;          // direccion que se mando (UI)
 let replay = null;          // { steps, i, res, timer, name }
+let curMove = null;         // movimiento manual en curso { d, v, t0, gotE }
+let pend = null;            // movimiento que termino y espera su E del carro { d, v, ms, timer }
 let keepTimer = null, helloTimer = null;
 let lastRun = null;         // resultado de la ultima repeticion (para mostrarlo al terminar)
 
@@ -463,6 +476,8 @@ function onLine(line) {
       $("liveR").textContent = mm(+p[2]);
       break;
     case "E": {                                            // termino un movimiento manual
+      if (pend) { clearTimeout(pend.timer); pend = null; }           // llego el dato real: no se guarda por tiempo
+      if (curMove && curMove.d === p[1]) curMove.gotE = true;      // (L/R: el carro termina el giro solo)
       const st = { d: p[1], v: +p[2], l: +p[3], r: +p[4], ms: +p[5] };
       if (!NAMES[st.d] || isNaN(st.l) || isNaN(st.r)) break;
       $("liveL").textContent = mm(st.l);
@@ -498,16 +513,48 @@ function setMoving(d) {
 
 function drive(d) {
   if (replay) { toast("Se canceló la repetición", "warn"); stopReplay(false); }
+  endMove();
   if (!send(`<${d}${speed}>`)) return;
   $("liveL").textContent = "0.0"; $("liveR").textContent = "0.0";
   setMoving(d);
+  curMove = { d, v: speed, t0: performance.now(), gotE: false };
 }
 
 function stopAll() {
   send("<S>");
+  endMove();
   if (replay) stopReplay(false);
   setMoving(null);
 }
+
+/* al terminar un movimiento: espera 1.5 s la linea E del carro; si no llega, lo guarda por tiempo */
+function endMove() {
+  const m = curMove;
+  curMove = null;
+  if (!m || replay || m.gotE) return;
+  const ms = Math.round(performance.now() - m.t0);
+  if (ms < 150) return;
+  if (pend) savePend();
+  pend = { d: m.d, v: m.v, ms, timer: setTimeout(savePend, 1500) };
+}
+
+function savePend() {
+  const p = pend;
+  pend = null;
+  if (!p) return;
+  clearTimeout(p.timer);
+  if (!$("rec").checked) return;
+  route.push({ d: p.d, v: p.v, l: 0, r: 0, ms: p.ms, t: 1 });
+  store("carro_ruta_actual", route);
+  renderSteps();
+  toast(`Guardado ${route.length}: ${NAMES[p.d]} ${(p.ms / 1000).toFixed(1)} s (por tiempo)`);
+}
+
+function stepShort(s) { return s.t ? `⏱ ${(s.ms / 1000).toFixed(1)} s` : `${mm(avg(s))} mm`; }
+
+$("btnCarG").onclick = () => { if (send("<G>")) toast("El carro está grabando: maneja y luego toca Terminar"); };
+$("btnCarE").onclick = () => { if (send("<E>")) toast("Grabación terminada en el carro"); };
+$("btnCarP").onclick = () => { if (send("<P>")) toast("El carro repite su ruta (STOP para cancelar)"); };
 
 document.querySelectorAll(".pad .dir").forEach((b) =>
   b.addEventListener("pointerdown", (e) => { e.preventDefault(); drive(b.dataset.d); }));
@@ -533,14 +580,18 @@ function twoTap(btn, fn, ask) {
 
 /* ----------------------------- ruta grabada ----------------------------- */
 function stepText(s) {
+  if (s.t) return `<span class="txt">${NAMES[s.d]} · vel ${s.v}
+    <small>⏱ ${(s.ms / 1000).toFixed(1)} s · guardado por tiempo (el carro no mandó encoders)</small></span>`;
   return `<span class="txt">${NAMES[s.d]} · vel ${s.v}
     <small>izq ${mm(s.l)} mm · der ${mm(s.r)} mm · ${(s.ms / 1000).toFixed(1)} s · ${avg(s)} cuentas</small></span>`;
 }
 
 function summary(steps) {
-  let rect = 0, giro = 0;
-  steps.forEach((s) => (s.d === "F" || s.d === "B" ? (rect += avg(s)) : (giro += avg(s))));
-  return steps.length ? `${steps.length} pasos · en recta ${mm(rect)} mm · en giros ${mm(giro)} mm de llanta` : "";
+  let rect = 0, giro = 0, tms = 0;
+  steps.forEach((s) => { if (s.t) tms += s.ms; else if (s.d === "F" || s.d === "B") rect += avg(s); else giro += avg(s); });
+  if (!steps.length) return "";
+  return `${steps.length} pasos · en recta ${mm(rect)} mm · en giros ${mm(giro)} mm de llanta` +
+    (tms ? ` · por tiempo ${(tms / 1000).toFixed(1)} s` : "");
 }
 
 function renderSteps() {
@@ -604,12 +655,12 @@ function renderAutoSteps() {
       if (i < run.i) {
         const r = run.res[i];
         li.className = "ok"; ic = "✓";
-        extra = r ? `<small>hizo izq ${mm(r.l)} · der ${mm(r.r)} mm (error ${mm(Math.round((r.l + r.r) / 2) - avg(s))} mm)</small>` : "";
+        extra = (r && !s.t) ? `<small>hizo izq ${mm(r.l)} · der ${mm(r.r)} mm (error ${mm(Math.round((r.l + r.r) / 2) - avg(s))} mm)</small>` : "";
       } else if (i === run.i && run === replay) { li.className = "run"; ic = "▸"; }
       else if (i === run.i && run.bad) { li.className = "bad"; ic = "✕"; }
     }
     li.innerHTML = `<span class="n">${i + 1}</span><span class="ic">${ic}</span>
-      <span class="txt">${NAMES[s.d]} · vel ${s.v} · ${mm(avg(s))} mm${extra || `<small>izq ${mm(s.l)} · der ${mm(s.r)} mm</small>`}</span>`;
+      <span class="txt">${NAMES[s.d]} · vel ${s.v} · ${stepShort(s)}${extra || (s.t ? "<small>por tiempo</small>" : `<small>izq ${mm(s.l)} · der ${mm(s.r)} mm</small>`)}</span>`;
     ol.appendChild(li);
   });
   const cur = ol.querySelector(".run");
@@ -665,8 +716,18 @@ function sendStep() {
   if (i >= steps.length) { endReplay("Ruta terminada ✓"); toast("Ruta terminada ✓"); return; }
   const s = steps[i];
   renderAutoSteps();
-  autoStatus(`Paso ${i + 1} de ${steps.length}: ${NAMES[s.d]} ${mm(avg(s))} mm`);
+  autoStatus(`Paso ${i + 1} de ${steps.length}: ${NAMES[s.d]} ${stepShort(s)}`);
   $("liveWhat").textContent = `Repitiendo ${i + 1}/${steps.length}`;
+  if (s.t) {                                               // paso por tiempo: misma direccion el mismo tiempo
+    if (!send(`<${s.d}${s.v}>`)) { endReplay("Sin conexión"); return; }
+    clearTimeout(replay.timer);
+    replay.timer = setTimeout(() => {
+      if (!replay) return;
+      send("<S>");
+      replay.timer = setTimeout(() => replayStepDone(0, 0), 700);   // espera a que se asiente
+    }, s.ms);
+    return;
+  }
   if (!send(`<P,${s.d},${s.v},${avg(s)}>`)) { endReplay("Sin conexión"); return; }
   clearTimeout(replay.timer);
   replay.timer = setTimeout(() => { send("<S>"); endReplay(`El paso ${i + 1} tardó demasiado; se paró el carro.`); },
