@@ -88,6 +88,18 @@
   #toast.warn{border-color:var(--warn);color:#ffd27a}
   .demo-tag{display:none;font-size:12px;color:#ffd27a;margin:6px 16px 0}
   body.demo .demo-tag{display:block}
+  .kv{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-top:1px solid var(--line);font-size:14px}
+  .kv:first-child{border-top:0}
+  .kv span{color:var(--muted)}
+  .kv b{font-weight:600;text-align:right}
+  #btInfo{margin-top:6px}
+  ul.devs{list-style:none;margin:8px 0 0;padding:0}
+  ul.devs li{display:flex;align-items:center;gap:8px;padding:9px 0;border-top:1px solid var(--line)}
+  ul.devs li:first-child{border-top:0}
+  ul.devs .txt{flex:1;min-width:0;font-weight:600;overflow-wrap:anywhere}
+  ul.devs .txt small{display:block;color:var(--muted);font-size:12px;font-weight:400}
+  ul.devs button{padding:8px 12px}
+  .tag{font-size:11px;font-weight:600;color:#6be3a6;border:1px solid #1f4a35;border-radius:6px;padding:1px 6px;margin-left:6px;vertical-align:middle}
   [hidden]{display:none!important}
 </style>
 </head>
@@ -106,6 +118,7 @@
 <nav class="tabs">
   <button data-tab="manual" class="active">Manual</button>
   <button data-tab="auto">Automático</button>
+  <button data-tab="bt">Bluetooth</button>
 </nav>
 
 <main>
@@ -175,6 +188,38 @@
     </div>
   </section>
 
+  <!-- ===================== BLUETOOTH ===================== -->
+  <section id="tab-bt" hidden>
+    <div class="card">
+      <h2>Conexión</h2>
+      <div id="btInfo"></div>
+      <div class="row btns">
+        <button id="btnScanAll" class="primary">Buscar todos</button>
+        <button id="btnScanHm">Solo HM-10</button>
+      </div>
+      <div class="row btns">
+        <button id="btnPing">Probar carro</button>
+        <button id="btnDisc">Desconectar</button>
+      </div>
+      <p class="hint">"Buscar todos" abre la lista de Bluefy con todos los dispositivos Bluetooth que hay cerca. Elige tu HM-10 y queda conectado.</p>
+    </div>
+
+    <div class="card" id="scanCard" hidden>
+      <div class="row"><h2>Cerca, en vivo</h2><button id="btnLive">Escanear</button></div>
+      <ul class="devs" id="liveList"></ul>
+    </div>
+
+    <div class="card">
+      <h2>Módulos usados antes</h2>
+      <ul class="devs" id="knownList"></ul>
+    </div>
+
+    <div class="card">
+      <h2>¿Cuál es mi módulo?</h2>
+      <p class="hint">El HM-10 sale como <b>HMSoft</b>, <b>BT05</b>, <b>MLT-BT05</b>, <b>DSD TECH</b>, <b>JDY-08</b> o <b>CC41-A</b>. "Solo HM-10" deja en la lista solo esos. Si no aparece: revisa que tenga corriente (LED parpadeando) y que no esté conectado a otro celular. Los HC-05 y HC-06 son Bluetooth clásico: el iPhone no los puede usar.</p>
+    </div>
+  </section>
+
   <details class="card">
     <summary>Mensajes con el carro (para revisar)</summary>
     <pre id="log"></pre>
@@ -193,6 +238,8 @@
    ==================================================================== */
 
 const SERVICE = 0xFFE0, CHARACT = 0xFFE1;
+const HM_FILTERS = [{ services: [SERVICE] }, { namePrefix: "HM" }, { namePrefix: "BT" }, { namePrefix: "DSD" },
+                    { namePrefix: "MLT" }, { namePrefix: "JDY" }, { namePrefix: "CC41" }];
 const MM_PER_COUNT = Math.PI * 65 / (11 * 4 * 90);   // 0.0516 mm por cuenta
 const MIN_COUNTS = 20;                                 // movimientos mas cortos no se guardan (toques)
 const NAMES = { F: "Adelante", B: "Atrás", L: "Gira izquierda", R: "Gira derecha" };
@@ -266,51 +313,75 @@ function onNotify(ev) {
   if (rxBuf.length > 300) rxBuf = "";
 }
 
-async function pickDevice() {
+async function pickDevice(onlyHm) {
+  if (onlyHm) return navigator.bluetooth.requestDevice({ filters: HM_FILTERS, optionalServices: [SERVICE] });
   try {
     return await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: [SERVICE] });
   } catch (e) {
     if (e.name === "NotFoundError" || /cancel/i.test(e.message)) throw e;      // el usuario cerro la lista
     log("acceptAllDevices no funcionó (" + e.message + "), busco por nombre/servicio");
     return await navigator.bluetooth.requestDevice({
-      filters: [{ services: [SERVICE] }, { namePrefix: "HM" }, { namePrefix: "BT" }, { namePrefix: "DSD" },
-                { namePrefix: "MLT" }, { namePrefix: "JDY" }, { namePrefix: "CC41" }],
+      filters: HM_FILTERS,
       optionalServices: [SERVICE],
     });
   }
 }
 
-async function connectBle() {
+/* mode "all" o "hm10": abre la lista de Bluefy. Sin mode: reconecta al ultimo modulo (o abre la lista) */
+async function connectBle(mode) {
   if (!navigator.bluetooth) {
     toast("Este navegador no tiene Bluetooth web. Abre esta página en la app Bluefy.", "warn");
     return;
   }
   try {
-    if (!device) {
-      device = await pickDevice();
-      device.addEventListener("gattserverdisconnected", onDisconnected);
-    }
-    setStatus("Conectando…", "mid");
-    const server = await device.gatt.connect();
-    const svc = await server.getPrimaryService(SERVICE);
-    charac = await svc.getCharacteristic(CHARACT);
-    charac.addEventListener("characteristicvaluechanged", onNotify);
-    await charac.startNotifications();
-    link = bleLink;
-    onConnected(device.name || "HM-10");
-  } catch (e) {
-    log("✖ " + e.message);
-    if (/cancel/i.test(e.message) || (e.name === "NotFoundError" && !charac)) { device = null; setStatus(); return; }
-    toast("No se conectó: " + e.message + ". ¿Es el HM-10 (HMSoft / BT05)?", "warn");
-    device = null; charac = null;
-    setStatus();
+    const d = (mode || !device) ? await pickDevice(mode === "hm10") : device;
+    await openDevice(d);
+  } catch (e) { connectError(e); }
+}
+
+function connectTo(d) { openDevice(d).catch(connectError); }
+
+function connectError(e) {
+  log("✖ " + e.message);
+  if (/cancel/i.test(e.message) || e.name === "NotFoundError") { setStatus(); return; }
+  if (/FFE0/.test(e.message)) { device = null; toast("Ese dispositivo no es un HM-10: no tiene el servicio FFE0. Elige otro.", "warn"); }
+  else toast("No se conectó: " + e.message, "warn");
+  charac = null;
+  setStatus();
+}
+
+async function openDevice(d) {
+  if (connected && device === d && !demo) return;    // ya esta conectado a ese
+  if (connected) {                                   // primero suelta el que estaba (y para el carro)
+    send("<S>", true);
+    await Promise.race([writeChain, new Promise((r) => setTimeout(r, 300))]);
+    if (demo) demo.close();
+    else if (device && device !== d) { try { device.gatt.disconnect(); } catch (e) {} }
+    dropLink();
   }
+  if (device && device !== d) device.removeEventListener("gattserverdisconnected", onDisconnected);
+  if (device !== d) d.addEventListener("gattserverdisconnected", onDisconnected);
+  device = d;
+  setStatus("Conectando…", "mid");
+  const server = await d.gatt.connect();
+  let svc;
+  try { svc = await server.getPrimaryService(SERVICE); }
+  catch (e) { try { d.gatt.disconnect(); } catch (x) {} throw new Error("no tiene el servicio FFE0"); }
+  charac = await svc.getCharacteristic(CHARACT);
+  charac.addEventListener("characteristicvaluechanged", onNotify);
+  await charac.startNotifications();
+  link = bleLink;
+  btInfo = { name: d.name || "(sin nombre)", id: d.id, props: charac.properties, ping: null };
+  remember(d);
+  onConnected(btInfo.name);
+  renderKnown();
 }
 
 function onConnected(name) {
   connected = true; carOk = false; rxBuf = "";
   log("✔ conectado a " + name);
   setStatus();
+  pingT0 = performance.now();
   send("<?>");
   clearInterval(keepTimer);
   keepTimer = setInterval(() => { if (connected && pendingWrites < 2) send("<K>", true); }, 500);   // "sigo aqui"
@@ -320,9 +391,15 @@ function onConnected(name) {
   }, 3000);
 }
 
-function onDisconnected() {
+function dropLink() {
   connected = false; carOk = false; charac = null; link = null;
   clearInterval(keepTimer);
+}
+
+function onDisconnected(ev) {
+  if (ev && ev.target && ev.target !== device) return;   // aviso tardio de un modulo anterior
+  if (!connected && !link) { setStatus(); return; }
+  dropLink();
   log("✖ desconectado");
   if (replay) endReplay("Se perdió la conexión: el carro se para solo en 2 s.");
   setMoving(null);
@@ -345,6 +422,7 @@ function setStatus(text, kind) {
   else { el.textContent = "Conectado ✓"; el.className = "pill on"; }
   $("btnConnect").textContent = connected ? "Desconectar" : (device ? "Reconectar" : "Conectar carro");
   $("btnDemo").hidden = connected;
+  renderBt();
 }
 
 /* ----------------------------- mensajes del carro ----------------------------- */
@@ -353,6 +431,7 @@ function onLine(line) {
   if (p[0] !== "T") log("← " + line);
   switch (p[0]) {
     case "H":
+      if (pingT0) { btInfo.ping = Math.round(performance.now() - pingT0); pingT0 = 0; }
       carOk = true; setStatus();
       break;
     case "T":
@@ -602,9 +681,9 @@ $("btnAutoStop").addEventListener("pointerdown", (e) => { e.preventDefault(); se
 /* ----------------------------- pestañas ----------------------------- */
 document.querySelectorAll("nav.tabs button").forEach((b) => b.addEventListener("click", () => {
   document.querySelectorAll("nav.tabs button").forEach((x) => x.classList.toggle("active", x === b));
-  $("tab-manual").hidden = b.dataset.tab !== "manual";
-  $("tab-auto").hidden = b.dataset.tab !== "auto";
+  ["manual", "auto", "bt"].forEach((t) => ($("tab-" + t).hidden = b.dataset.tab !== t));
   if (b.dataset.tab === "auto") renderRouteSel();
+  if (b.dataset.tab === "bt") { renderBt(); renderKnown(); }
 }));
 
 /* ----------------------------- botones de conexion ----------------------------- */
@@ -682,8 +761,94 @@ $("btnDemo").onclick = () => {
   demo = makeDemo();
   link = demo;
   document.body.classList.add("demo");
+  btInfo = { name: "carro simulado", id: "demo", props: { write: true, notify: true }, ping: null };
   onConnected("carro simulado");
 };
+
+/* ----------------------------- pestaña Bluetooth ----------------------------- */
+let btInfo = { name: "", id: "", props: null, ping: null };
+let known = load("carro_bt_conocidos", []);
+let pingT0 = 0, scanning = null;
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const looksHm = (n) => /HM|BT0?5|MLT|DSD|JDY|CC41/i.test(n || "");
+
+function remember(d) {
+  known = [{ name: d.name || "(sin nombre)", id: d.id, t: Date.now() }, ...known.filter((k) => k.id !== d.id)].slice(0, 8);
+  store("carro_bt_conocidos", known);
+}
+
+function renderBt() {
+  const p = btInfo.props || {};
+  const rows = [
+    ["Estado", connected ? (demo ? "Conectado (simulado)" : "Conectado") : "Desconectado"],
+    ["Módulo", connected ? btInfo.name : "—"],
+    ["Servicio FFE0 / FFE1", connected ? `sí · ${p.write || p.writeWithoutResponse ? "escribe" : "NO escribe"} · ${p.notify ? "notifica" : "NO notifica"}` : "—"],
+    ["El carro contesta", connected ? (carOk ? "sí ✓" : "todavía no") : "—"],
+    ["Tiempo de respuesta", connected && btInfo.ping != null ? btInfo.ping + " ms" : "—"],
+  ];
+  $("btInfo").innerHTML = rows.map(([k, v]) => `<div class="kv"><span>${k}</span><b>${esc(v)}</b></div>`).join("");
+  $("btnPing").disabled = !connected;
+  $("btnDisc").disabled = !connected;
+  if (!$("tab-bt").hidden) renderKnown();
+}
+
+async function renderKnown() {
+  const ul = $("knownList");
+  let allowed = [];
+  if (navigator.bluetooth && navigator.bluetooth.getDevices) { try { allowed = await navigator.bluetooth.getDevices(); } catch (e) {} }
+  ul.innerHTML = known.length ? "" : `<li class="empty">Aquí aparecen los módulos a los que ya te conectaste.</li>`;
+  known.forEach((k) => {
+    const dev = allowed.find((d) => d.id === k.id) || (device && device.id === k.id ? device : null);
+    const now = connected && !demo && device && device.id === k.id;
+    const li = document.createElement("li");
+    li.innerHTML = `<span class="txt">${esc(k.name)}${now ? '<span class="tag">conectado</span>' : ""}
+      <small>última vez ${new Date(k.t).toLocaleString("es-MX", { dateStyle: "short", timeStyle: "short" })}</small></span>`;
+    const go = document.createElement("button"); go.textContent = "Conectar"; go.disabled = now;
+    go.onclick = () => (dev ? connectTo(dev) : connectBle("all"));
+    const del = document.createElement("button"); del.textContent = "Olvidar";
+    del.onclick = () => { known = known.filter((x) => x.id !== k.id); store("carro_bt_conocidos", known); renderKnown(); };
+    li.append(go, del);
+    ul.appendChild(li);
+  });
+}
+
+async function liveScan() {                          // solo si el navegador deja escanear (requestLEScan)
+  const ul = $("liveList"), btn = $("btnLive");
+  if (scanning) { scanning.stop(); return; }
+  const seen = new Map();
+  const draw = () => {
+    const list = [...seen.values()].sort((a, b) => (b.hm - a.hm) || ((b.rssi ?? -999) - (a.rssi ?? -999)));
+    ul.innerHTML = list.length ? "" : `<li class="empty">Buscando…</li>`;
+    list.forEach((x) => {
+      const li = document.createElement("li");
+      li.innerHTML = `<span class="txt">${esc(x.name)}${x.hm ? '<span class="tag">HM-10</span>' : ""}<small>señal ${x.rssi ?? "?"} dBm</small></span>`;
+      const b = document.createElement("button"); b.textContent = "Conectar";
+      b.onclick = () => { if (scanning) scanning.stop(); connectTo(x.dev); };
+      li.appendChild(b);
+      ul.appendChild(li);
+    });
+  };
+  try {
+    const scan = await navigator.bluetooth.requestLEScan({ acceptAllAdvertisements: true });
+    const onAdv = (e) => {
+      const name = e.name || e.device.name || "(sin nombre)";
+      seen.set(e.device.id, { dev: e.device, name, rssi: e.rssi, hm: looksHm(name) || (e.uuids || []).some((u) => /ffe0/i.test(String(u))) });
+      draw();
+    };
+    navigator.bluetooth.addEventListener("advertisementreceived", onAdv);
+    const timer = setTimeout(() => scanning && scanning.stop(), 15000);
+    scanning = { stop() { try { scan.stop(); } catch (e) {} navigator.bluetooth.removeEventListener("advertisementreceived", onAdv); clearTimeout(timer); scanning = null; btn.textContent = "Escanear"; } };
+    btn.textContent = "Detener";
+    draw();
+  } catch (e) { toast("No se pudo escanear: " + e.message, "warn"); }
+}
+
+$("btnScanAll").onclick = () => connectBle("all");
+$("btnScanHm").onclick = () => connectBle("hm10");
+$("btnPing").onclick = () => { pingT0 = performance.now(); btInfo.ping = null; send("<?>"); renderBt(); };
+$("btnDisc").onclick = () => $("btnConnect").onclick();
+$("btnLive").onclick = liveScan;
+$("scanCard").hidden = !(navigator.bluetooth && navigator.bluetooth.requestLEScan);
 
 /* ----------------------------- inicio ----------------------------- */
 renderSteps();
