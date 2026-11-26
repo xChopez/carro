@@ -1,0 +1,695 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0f1115">
+<title>Carro MR2006B</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#171a21; --panel2:#1e222b; --line:#2a2f3a;
+    --text:#e9ecf2; --muted:#8b94a7; --accent:#4c8dff; --go:#1f9d63; --stop:#e5484d; --warn:#f2a531;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--text);
+    font:16px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  body{padding:env(safe-area-inset-top) 0 calc(env(safe-area-inset-bottom) + 16px)}
+  button,input,select{font:inherit;color:inherit}
+  button{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;touch-action:manipulation;
+    border:1px solid var(--line);background:var(--panel2);border-radius:12px;padding:10px 14px;cursor:pointer}
+  button:disabled{opacity:.4}
+  header{display:flex;align-items:center;justify-content:space-between;padding:12px 16px 4px}
+  header h1{font-size:19px;margin:0;font-weight:700;letter-spacing:.2px}
+  header h1 small{color:var(--muted);font-weight:500;font-size:13px;margin-left:6px}
+  .pill{font-size:13px;padding:5px 10px;border-radius:999px;background:#2a1b1d;color:#ff9a9d;border:1px solid #4a2427;white-space:nowrap}
+  .pill.on{background:#132a20;color:#6be3a6;border-color:#1f4a35}
+  .pill.mid{background:#2c2413;color:#ffd27a;border-color:#4d3d18}
+  .connect{display:flex;gap:8px;padding:8px 16px}
+  .connect button{flex:1}
+  .primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+  .ghost{background:transparent}
+  nav.tabs{display:flex;margin:8px 16px 0;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:4px;gap:4px}
+  nav.tabs button{flex:1;border:0;background:transparent;border-radius:9px;padding:10px;font-weight:600;color:var(--muted)}
+  nav.tabs button.active{background:var(--panel2);color:var(--text)}
+  main{padding:0 16px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;margin-top:12px}
+  .card h2{font-size:15px;margin:0;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.6px}
+  .row{display:flex;align-items:center;justify-content:space-between;gap:10px}
+  .btns{margin-top:10px}
+  .btns button,.btns input{flex:1;min-width:0}
+  input[type=text],input[type=number],select{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px;width:100%}
+  input[type=number]{width:90px;text-align:right}
+  .live{display:flex;justify-content:space-between;align-items:center}
+  .live .what{font-size:20px;font-weight:700}
+  .live .nums{display:flex;gap:14px;color:var(--muted);font-size:14px;text-align:right}
+  .live .nums b{color:var(--text);font-variant-numeric:tabular-nums;font-size:17px}
+  .speed{display:flex;align-items:center;gap:12px}
+  .speed input{flex:1;accent-color:var(--accent)}
+  .speed b{font-size:24px;width:26px;text-align:center}
+  .pad{display:grid;grid-template-columns:repeat(3,1fr);grid-template-areas:". f ." "l s r" ". b .";gap:10px;margin-top:12px}
+  .pad button{min-height:88px;font-size:30px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;border-radius:16px}
+  .pad button span{font-size:12px;color:var(--muted)}
+  .pad .f{grid-area:f}.pad .l{grid-area:l}.pad .r{grid-area:r}.pad .b{grid-area:b}
+  .pad .s{grid-area:s;background:var(--stop);border-color:var(--stop);color:#fff;font-size:20px;font-weight:800}
+  .pad button.active{background:var(--go);border-color:var(--go);color:#fff}
+  .pad button.active span{color:#d9ffe9}
+  .hint{color:var(--muted);font-size:13px;margin:8px 2px 0}
+  ol.steps{list-style:none;margin:10px 0 0;padding:0;max-height:300px;overflow:auto}
+  ol.steps li{display:flex;align-items:center;gap:10px;padding:9px 4px;border-top:1px solid var(--line)}
+  ol.steps li:first-child{border-top:0}
+  ol.steps .n{color:var(--muted);width:22px;text-align:right;font-variant-numeric:tabular-nums}
+  ol.steps .ic{font-size:18px;width:22px;text-align:center}
+  ol.steps .txt{flex:1;min-width:0}
+  ol.steps .txt small{display:block;color:var(--muted);font-size:12px}
+  ol.steps .del{padding:4px 10px;background:transparent;color:var(--muted)}
+  ol.steps li.run{background:#1b2a44;border-radius:8px}
+  ol.steps li.ok .ic{color:#6be3a6}
+  ol.steps li.bad .ic{color:#ff8a8d}
+  .empty{color:var(--muted);font-size:14px;padding:10px 2px}
+  .sum{color:var(--muted);font-size:13px;margin-top:8px}
+  .switch{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--muted)}
+  .switch input{width:20px;height:20px;accent-color:var(--stop)}
+  .go{background:var(--go);border-color:var(--go);color:#fff;font-weight:700}
+  .stopbtn{background:var(--stop);border-color:var(--stop);color:#fff;font-weight:800}
+  #autoStatus{margin-top:10px;font-size:14px;color:var(--muted);min-height:20px}
+  ul.saved{list-style:none;margin:8px 0 0;padding:0}
+  ul.saved li{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 0;border-top:1px solid var(--line)}
+  ul.saved li:first-child{border-top:0}
+  ul.saved li .txt{flex:1 1 100%;font-weight:600}
+  ul.saved li small{display:block;color:var(--muted);font-weight:400;font-size:13px}
+  ul.saved li button{flex:1;padding:8px 10px}
+  ul.saved li button.x{flex:0 0 auto}
+  details summary{color:var(--muted);font-size:14px;cursor:pointer}
+  pre#log{white-space:pre-wrap;font:12px/1.35 ui-monospace,Menlo,monospace;color:#b6bfd2;max-height:220px;overflow:auto;margin:8px 0 0}
+  #toast{position:fixed;left:16px;right:16px;bottom:calc(env(safe-area-inset-bottom) + 16px);background:#262b36;border:1px solid var(--line);
+    border-radius:12px;padding:12px 14px;font-size:14px;opacity:0;transform:translateY(10px);transition:.2s;pointer-events:none;z-index:9}
+  #toast.show{opacity:1;transform:none}
+  #toast.warn{border-color:var(--warn);color:#ffd27a}
+  .demo-tag{display:none;font-size:12px;color:#ffd27a;margin:6px 16px 0}
+  body.demo .demo-tag{display:block}
+  [hidden]{display:none!important}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Carro<small>HM-10 · Bluefy</small></h1>
+  <div id="status" class="pill">Desconectado</div>
+</header>
+<div class="connect">
+  <button id="btnConnect" class="primary">Conectar carro</button>
+  <button id="btnDemo" class="ghost">Probar sin carro</button>
+</div>
+<div class="demo-tag">Modo prueba: es un carro simulado, no se mueve nada de verdad.</div>
+
+<nav class="tabs">
+  <button data-tab="manual" class="active">Manual</button>
+  <button data-tab="auto">Automático</button>
+</nav>
+
+<main>
+  <!-- ======================= MANUAL ======================= -->
+  <section id="tab-manual">
+    <div class="card live">
+      <div class="what" id="liveWhat">Parado</div>
+      <div class="nums">
+        <div>Izq<br><b id="liveL">0.0</b> mm</div>
+        <div>Der<br><b id="liveR">0.0</b> mm</div>
+      </div>
+    </div>
+
+    <div class="card speed">
+      <span>Velocidad</span>
+      <input type="range" id="speed" min="1" max="9" step="1" value="5">
+      <b id="speedVal">5</b>
+    </div>
+
+    <div class="pad">
+      <button class="dir f" data-d="F">▲<span>Adelante</span></button>
+      <button class="dir l" data-d="L">◀<span>Izquierda</span></button>
+      <button class="s" id="btnStop">STOP</button>
+      <button class="dir r" data-d="R">▶<span>Derecha</span></button>
+      <button class="dir b" data-d="B">▼<span>Atrás</span></button>
+    </div>
+    <p class="hint">Toca una flecha: el carro sigue hasta que toques STOP u otra flecha. Cada movimiento se guarda con lo que contó cada encoder.</p>
+
+    <div class="card">
+      <div class="row">
+        <h2>Ruta grabada</h2>
+        <label class="switch"><input type="checkbox" id="rec" checked> Grabando</label>
+      </div>
+      <ol class="steps" id="steps"></ol>
+      <div class="sum" id="sum"></div>
+      <div class="row btns">
+        <button id="btnUndo">Borrar último</button>
+        <button id="btnClear">Nueva ruta</button>
+      </div>
+      <div class="row btns">
+        <input type="text" id="routeName" placeholder="Nombre (ej. pista 1)" maxlength="30">
+        <button id="btnSave">Guardar ruta</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== AUTOMATICO ===================== -->
+  <section id="tab-auto" hidden>
+    <div class="card">
+      <h2>Ruta a repetir</h2>
+      <div style="margin-top:10px"><select id="routeSel"></select></div>
+      <ol class="steps" id="autoSteps"></ol>
+      <div class="row btns">
+        <span class="switch">Pausa entre pasos</span>
+        <span><input type="number" id="pause" min="0" max="5000" step="100" value="500"> ms</span>
+      </div>
+      <div class="row btns">
+        <button id="btnPlay" class="go">▶ Repetir ruta</button>
+        <button id="btnAutoStop" class="stopbtn">■ PARAR</button>
+      </div>
+      <div id="autoStatus"></div>
+    </div>
+
+    <div class="card">
+      <h2>Rutas guardadas</h2>
+      <ul class="saved" id="saved"></ul>
+    </div>
+  </section>
+
+  <details class="card">
+    <summary>Mensajes con el carro (para revisar)</summary>
+    <pre id="log"></pre>
+  </details>
+</main>
+<div id="toast"></div>
+
+<script>
+"use strict";
+/* ====================================================================
+   Carro MR2006B - app web para Bluefy (Web Bluetooth) con un HM-10.
+   El HM-10 tiene el servicio FFE0 y la caracteristica FFE1: lo que se escribe
+   ahi sale por su TX hacia el STM32, y lo que el STM32 manda llega como notificacion.
+   Protocolo (ver car.c):  app -> carro  <F5> <B5> <L5> <R5> <S> <K> <?> <P,F,5,12345>
+                           carro -> app  H,  T,izq,der  E,dir,vel,izq,der,ms  D,dir,izq,der,ms  X,motivo,..  W,motivo
+   ==================================================================== */
+
+const SERVICE = 0xFFE0, CHARACT = 0xFFE1;
+const MM_PER_COUNT = Math.PI * 65 / (11 * 4 * 90);   // 0.0516 mm por cuenta
+const MIN_COUNTS = 20;                                 // movimientos mas cortos no se guardan (toques)
+const NAMES = { F: "Adelante", B: "Atrás", L: "Gira izquierda", R: "Gira derecha" };
+const ARROWS = { F: "▲", B: "▼", L: "◀", R: "▶" };
+
+const $ = (id) => document.getElementById(id);
+const mm = (c) => (c * MM_PER_COUNT).toFixed(1);
+const avg = (s) => Math.round((s.l + s.r) / 2);
+const load = (k, d) => { try { const v = JSON.parse(localStorage.getItem(k)); return v ?? d; } catch (e) { return d; } };
+const store = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
+
+let link = null;            // { send(text), close() }
+let connected = false, carOk = false;
+let speed = load("carro_vel", 5);
+let route = load("carro_ruta_actual", []);
+let saved = load("carro_rutas", {});
+let moving = null;          // direccion que se mando (UI)
+let replay = null;          // { steps, i, res, timer, name }
+let keepTimer = null, helloTimer = null;
+let lastRun = null;         // resultado de la ultima repeticion (para mostrarlo al terminar)
+
+/* ----------------------------- registro y avisos ----------------------------- */
+function log(t) {
+  const el = $("log");
+  const now = new Date();
+  const ts = now.toLocaleTimeString("es-MX", { hour12: false }) + "." + String(now.getMilliseconds()).padStart(3, "0");
+  el.textContent = (ts + "  " + t + "\n" + el.textContent).slice(0, 6000);
+}
+let toastTimer = null;
+function toast(t, kind) {
+  const el = $("toast");
+  el.textContent = t;
+  el.className = "show" + (kind ? " " + kind : "");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => (el.className = ""), kind === "warn" ? 4500 : 2200);
+}
+
+/* ----------------------------- conexion Bluetooth ----------------------------- */
+let device = null, charac = null, rxBuf = "", writeChain = Promise.resolve(), pendingWrites = 0;
+const enc = new TextEncoder(), dec = new TextDecoder();
+
+async function writeChunk(bytes) {
+  const p = charac.properties || {};
+  if (p.writeWithoutResponse && charac.writeValueWithoutResponse) return charac.writeValueWithoutResponse(bytes);
+  if (p.write && charac.writeValueWithResponse) return charac.writeValueWithResponse(bytes);
+  return charac.writeValue(bytes);
+}
+
+const bleLink = {
+  send(text) {
+    if (!charac) return Promise.resolve();
+    const data = enc.encode(text);
+    pendingWrites++;
+    writeChain = writeChain.then(async () => {
+      for (let i = 0; i < data.length; i += 20) await writeChunk(data.slice(i, i + 20));   // el HM-10 acepta 20 bytes por paquete
+    }).catch((e) => log("✖ no se pudo escribir: " + e.message))
+      .finally(() => pendingWrites--);
+    return writeChain;
+  },
+  close() { try { device && device.gatt.connected && device.gatt.disconnect(); } catch (e) {} },
+};
+
+function onNotify(ev) {
+  rxBuf += dec.decode(ev.target.value);
+  let k;
+  while ((k = rxBuf.indexOf("\n")) >= 0) {
+    const line = rxBuf.slice(0, k).replace(/\r/g, "").trim();
+    rxBuf = rxBuf.slice(k + 1);
+    if (line) onLine(line);
+  }
+  if (rxBuf.length > 300) rxBuf = "";
+}
+
+async function pickDevice() {
+  try {
+    return await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: [SERVICE] });
+  } catch (e) {
+    if (e.name === "NotFoundError" || /cancel/i.test(e.message)) throw e;      // el usuario cerro la lista
+    log("acceptAllDevices no funcionó (" + e.message + "), busco por nombre/servicio");
+    return await navigator.bluetooth.requestDevice({
+      filters: [{ services: [SERVICE] }, { namePrefix: "HM" }, { namePrefix: "BT" }, { namePrefix: "DSD" },
+                { namePrefix: "MLT" }, { namePrefix: "JDY" }, { namePrefix: "CC41" }],
+      optionalServices: [SERVICE],
+    });
+  }
+}
+
+async function connectBle() {
+  if (!navigator.bluetooth) {
+    toast("Este navegador no tiene Bluetooth web. Abre esta página en la app Bluefy.", "warn");
+    return;
+  }
+  try {
+    if (!device) {
+      device = await pickDevice();
+      device.addEventListener("gattserverdisconnected", onDisconnected);
+    }
+    setStatus("Conectando…", "mid");
+    const server = await device.gatt.connect();
+    const svc = await server.getPrimaryService(SERVICE);
+    charac = await svc.getCharacteristic(CHARACT);
+    charac.addEventListener("characteristicvaluechanged", onNotify);
+    await charac.startNotifications();
+    link = bleLink;
+    onConnected(device.name || "HM-10");
+  } catch (e) {
+    log("✖ " + e.message);
+    if (/cancel/i.test(e.message) || (e.name === "NotFoundError" && !charac)) { device = null; setStatus(); return; }
+    toast("No se conectó: " + e.message + ". ¿Es el HM-10 (HMSoft / BT05)?", "warn");
+    device = null; charac = null;
+    setStatus();
+  }
+}
+
+function onConnected(name) {
+  connected = true; carOk = false; rxBuf = "";
+  log("✔ conectado a " + name);
+  setStatus();
+  send("<?>");
+  clearInterval(keepTimer);
+  keepTimer = setInterval(() => { if (connected && pendingWrites < 2) send("<K>", true); }, 500);   // "sigo aqui"
+  clearTimeout(helloTimer);
+  helloTimer = setTimeout(() => {
+    if (connected && !carOk) toast("El Bluetooth conectó pero el carro no contesta: revisa TX/RX del HM-10 y que el Nucleo tenga el firmware nuevo.", "warn");
+  }, 3000);
+}
+
+function onDisconnected() {
+  connected = false; carOk = false; charac = null; link = null;
+  clearInterval(keepTimer);
+  log("✖ desconectado");
+  if (replay) endReplay("Se perdió la conexión: el carro se para solo en 2 s.");
+  setMoving(null);
+  setStatus();
+  toast("Se desconectó el carro", "warn");
+}
+
+function send(text, quiet) {
+  if (!link || !connected) { if (!quiet) toast("Primero conecta el carro", "warn"); return false; }
+  if (!quiet) log("→ " + text);
+  link.send(text);
+  return true;
+}
+
+function setStatus(text, kind) {
+  const el = $("status");
+  if (text) { el.textContent = text; el.className = "pill " + (kind || ""); return; }
+  if (!connected) { el.textContent = "Desconectado"; el.className = "pill"; }
+  else if (!carOk) { el.textContent = "Bluetooth OK · esperando carro"; el.className = "pill mid"; }
+  else { el.textContent = "Conectado ✓"; el.className = "pill on"; }
+  $("btnConnect").textContent = connected ? "Desconectar" : (device ? "Reconectar" : "Conectar carro");
+  $("btnDemo").hidden = connected;
+}
+
+/* ----------------------------- mensajes del carro ----------------------------- */
+function onLine(line) {
+  const p = line.split(",");
+  if (p[0] !== "T") log("← " + line);
+  switch (p[0]) {
+    case "H":
+      carOk = true; setStatus();
+      break;
+    case "T":
+      $("liveL").textContent = mm(+p[1]);
+      $("liveR").textContent = mm(+p[2]);
+      break;
+    case "E": {                                            // termino un movimiento manual
+      const st = { d: p[1], v: +p[2], l: +p[3], r: +p[4], ms: +p[5] };
+      if (!NAMES[st.d] || isNaN(st.l) || isNaN(st.r)) break;
+      $("liveL").textContent = mm(st.l);
+      $("liveR").textContent = mm(st.r);
+      if ($("rec").checked && avg(st) >= MIN_COUNTS && !replay) {
+        route.push(st);
+        store("carro_ruta_actual", route);
+        renderSteps();
+        toast(`Guardado ${route.length}: ${NAMES[st.d]} ${mm(avg(st))} mm`);
+      }
+      break;
+    }
+    case "D":
+      replayStepDone(+p[2], +p[3]);
+      break;
+    case "X":
+      if (replay) endReplay("Paso cancelado por el carro: " + p[1]);
+      else if (!/^(S|cambio)$/.test(p[1])) toast("El carro rechazó el paso: " + p[1], "warn");
+      break;
+    case "W":
+      setMoving(null);
+      toast("⚠ " + p[1], "warn");
+      break;
+  }
+}
+
+/* ----------------------------- manejo manual ----------------------------- */
+function setMoving(d) {
+  moving = d;
+  document.querySelectorAll(".pad .dir").forEach((b) => b.classList.toggle("active", b.dataset.d === d));
+  $("liveWhat").textContent = d ? NAMES[d] : (replay ? "Repitiendo…" : "Parado");
+}
+
+function drive(d) {
+  if (replay) { toast("Se canceló la repetición", "warn"); stopReplay(false); }
+  if (!send(`<${d}${speed}>`)) return;
+  $("liveL").textContent = "0.0"; $("liveR").textContent = "0.0";
+  setMoving(d);
+}
+
+function stopAll() {
+  send("<S>");
+  if (replay) stopReplay(false);
+  setMoving(null);
+}
+
+document.querySelectorAll(".pad .dir").forEach((b) =>
+  b.addEventListener("pointerdown", (e) => { e.preventDefault(); drive(b.dataset.d); }));
+$("btnStop").addEventListener("pointerdown", (e) => { e.preventDefault(); stopAll(); });
+
+$("speed").value = speed;
+$("speedVal").textContent = speed;
+$("speed").addEventListener("input", () => {
+  speed = +$("speed").value;
+  $("speedVal").textContent = speed;
+  store("carro_vel", speed);
+});
+$("speed").addEventListener("change", () => { if (moving && connected) send(`<${moving}${speed}>`); });
+
+/* confirmar con dos toques (sin ventanas emergentes: algunos navegadores de iPhone no las muestran) */
+function twoTap(btn, fn, ask) {
+  if (btn.dataset.armed) { delete btn.dataset.armed; btn.textContent = btn.dataset.label; fn(); return; }
+  btn.dataset.label = btn.textContent;
+  btn.dataset.armed = "1";
+  btn.textContent = ask || "¿Seguro? toca otra vez";
+  setTimeout(() => { if (btn.dataset.armed) { delete btn.dataset.armed; btn.textContent = btn.dataset.label; } }, 3000);
+}
+
+/* ----------------------------- ruta grabada ----------------------------- */
+function stepText(s) {
+  return `<span class="txt">${NAMES[s.d]} · vel ${s.v}
+    <small>izq ${mm(s.l)} mm · der ${mm(s.r)} mm · ${(s.ms / 1000).toFixed(1)} s · ${avg(s)} cuentas</small></span>`;
+}
+
+function summary(steps) {
+  let rect = 0, giro = 0;
+  steps.forEach((s) => (s.d === "F" || s.d === "B" ? (rect += avg(s)) : (giro += avg(s))));
+  return steps.length ? `${steps.length} pasos · en recta ${mm(rect)} mm · en giros ${mm(giro)} mm de llanta` : "";
+}
+
+function renderSteps() {
+  const ol = $("steps");
+  ol.innerHTML = route.length ? "" : `<li class="empty">Todavía no hay movimientos. Maneja el carro y aquí aparece cada uno.</li>`;
+  route.forEach((s, i) => {
+    const li = document.createElement("li");
+    li.innerHTML = `<span class="n">${i + 1}</span><span class="ic">${ARROWS[s.d]}</span>${stepText(s)}<button class="del" title="Borrar">✕</button>`;
+    li.querySelector(".del").onclick = () => { route.splice(i, 1); store("carro_ruta_actual", route); renderSteps(); };
+    ol.appendChild(li);
+  });
+  ol.scrollTop = ol.scrollHeight;
+  $("sum").textContent = summary(route);
+  renderRouteSel();
+}
+
+$("btnUndo").onclick = () => { route.pop(); store("carro_ruta_actual", route); renderSteps(); };
+$("btnClear").onclick = () => {
+  const go = () => { route = []; store("carro_ruta_actual", route); renderSteps(); };
+  route.length ? twoTap($("btnClear"), go, "¿Borrar todo? toca otra vez") : go();
+};
+$("btnSave").onclick = () => {
+  const name = $("routeName").value.trim();
+  if (!route.length) { toast("La ruta está vacía", "warn"); return; }
+  if (!name) { toast("Ponle nombre a la ruta", "warn"); $("routeName").focus(); return; }
+  const go = () => {
+    saved[name] = route.map((s) => ({ ...s }));
+    store("carro_rutas", saved);
+    $("routeName").value = "";
+    renderSaved(); renderRouteSel(name);
+    toast(`Ruta "${name}" guardada (${route.length} pasos)`);
+  };
+  saved[name] ? twoTap($("btnSave"), go, "Ya existe: ¿reemplazar?") : go();
+};
+
+/* ----------------------------- automatico ----------------------------- */
+const CURRENT = "__actual__";
+function selectedSteps() {
+  const v = $("routeSel").value;
+  return v === CURRENT ? route : (saved[v] || []);
+}
+
+function renderRouteSel(select) {
+  const sel = $("routeSel");
+  const keep = select || sel.value || CURRENT;
+  sel.innerHTML = `<option value="${CURRENT}">Ruta grabada en Manual (${route.length} pasos)</option>` +
+    Object.keys(saved).map((n) => `<option>${n.replace(/</g, "&lt;")}</option>`).join("");
+  sel.value = [...sel.options].some((o) => o.value === keep) ? keep : CURRENT;
+  renderAutoSteps();
+}
+
+function renderAutoSteps() {
+  const run = replay || (lastRun && lastRun.key === $("routeSel").value ? lastRun : null);
+  const steps = run ? run.steps : selectedSteps();
+  const ol = $("autoSteps");
+  ol.innerHTML = steps.length ? "" : `<li class="empty">Esta ruta no tiene pasos.</li>`;
+  steps.forEach((s, i) => {
+    const li = document.createElement("li");
+    let ic = ARROWS[s.d], extra = "";
+    if (run) {
+      if (i < run.i) {
+        const r = run.res[i];
+        li.className = "ok"; ic = "✓";
+        extra = r ? `<small>hizo izq ${mm(r.l)} · der ${mm(r.r)} mm (error ${mm(Math.round((r.l + r.r) / 2) - avg(s))} mm)</small>` : "";
+      } else if (i === run.i && run === replay) { li.className = "run"; ic = "▸"; }
+      else if (i === run.i && run.bad) { li.className = "bad"; ic = "✕"; }
+    }
+    li.innerHTML = `<span class="n">${i + 1}</span><span class="ic">${ic}</span>
+      <span class="txt">${NAMES[s.d]} · vel ${s.v} · ${mm(avg(s))} mm${extra || `<small>izq ${mm(s.l)} · der ${mm(s.r)} mm</small>`}</span>`;
+    ol.appendChild(li);
+  });
+  const cur = ol.querySelector(".run");
+  if (cur) cur.scrollIntoView({ block: "nearest" });
+}
+$("routeSel").onchange = () => { lastRun = null; autoStatus(""); renderAutoSteps(); };
+
+function renderSaved() {
+  const ul = $("saved");
+  const names = Object.keys(saved);
+  ul.innerHTML = names.length ? "" : `<li class="empty">Guarda una ruta desde la pestaña Manual.</li>`;
+  names.forEach((n) => {
+    const li = document.createElement("li");
+    const span = document.createElement("span");
+    span.className = "txt";
+    span.textContent = n;
+    const small = document.createElement("small");
+    small.textContent = summary(saved[n]);
+    span.appendChild(small);
+    const use = document.createElement("button"); use.textContent = "Usar";
+    use.onclick = () => renderRouteSel(n);
+    const edit = document.createElement("button"); edit.textContent = "A Manual";
+    edit.title = "Copiarla a la ruta de la pestaña Manual para seguir grabando o editarla";
+    edit.onclick = () => {
+      const go = () => { route = saved[n].map((s) => ({ ...s })); store("carro_ruta_actual", route); renderSteps(); toast(`"${n}" copiada a Manual`); };
+      route.length ? twoTap(edit, go, "¿Reemplazar?") : go();
+    };
+    const del = document.createElement("button"); del.textContent = "Borrar"; del.className = "x";
+    del.onclick = () => twoTap(del, () => { delete saved[n]; store("carro_rutas", saved); renderSaved(); renderRouteSel(); }, "¿Borrar?");
+    li.append(span, use, edit, del);
+    ul.appendChild(li);
+  });
+}
+
+function autoStatus(t) { $("autoStatus").textContent = t; }
+
+function playRoute() {
+  if (!connected) { toast("Primero conecta el carro", "warn"); return; }
+  if (replay) return;
+  const steps = selectedSteps().map((s) => ({ ...s }));
+  if (!steps.length) { toast("La ruta no tiene pasos", "warn"); return; }
+  replay = { key: $("routeSel").value, steps, i: 0, res: [], timer: null };
+  lastRun = null;
+  setMoving(null);
+  $("btnPlay").disabled = true;
+  autoStatus("Repitiendo…");
+  sendStep();
+}
+
+function sendStep() {
+  if (!replay) return;
+  const { steps, i } = replay;
+  if (i >= steps.length) { endReplay("Ruta terminada ✓"); toast("Ruta terminada ✓"); return; }
+  const s = steps[i];
+  renderAutoSteps();
+  autoStatus(`Paso ${i + 1} de ${steps.length}: ${NAMES[s.d]} ${mm(avg(s))} mm`);
+  $("liveWhat").textContent = `Repitiendo ${i + 1}/${steps.length}`;
+  if (!send(`<P,${s.d},${s.v},${avg(s)}>`)) { endReplay("Sin conexión"); return; }
+  clearTimeout(replay.timer);
+  replay.timer = setTimeout(() => { send("<S>"); endReplay(`El paso ${i + 1} tardó demasiado; se paró el carro.`); },
+    Math.max(8000, s.ms * 3 + 5000));
+}
+
+function replayStepDone(l, r) {
+  if (!replay) return;
+  clearTimeout(replay.timer);
+  replay.res[replay.i] = { l, r };
+  replay.i++;
+  renderAutoSteps();
+  const pause = Math.max(0, +$("pause").value || 0);
+  replay.timer = setTimeout(sendStep, pause);
+}
+
+function endReplay(msg) {
+  if (replay) clearTimeout(replay.timer);
+  const r = replay;
+  replay = null;
+  if (r) { r.bad = r.i < r.steps.length && msg !== "Detenido"; lastRun = r; }   // deja visible lo que alcanzo a hacer
+  $("btnPlay").disabled = false;
+  autoStatus(msg || "");
+  renderAutoSteps();
+  setMoving(null);
+}
+
+function stopReplay(sendStop) {
+  if (sendStop !== false) send("<S>");
+  endReplay("Detenido");
+}
+
+$("btnPlay").onclick = playRoute;
+$("btnAutoStop").addEventListener("pointerdown", (e) => { e.preventDefault(); send("<S>"); stopReplay(false); });
+
+/* ----------------------------- pestañas ----------------------------- */
+document.querySelectorAll("nav.tabs button").forEach((b) => b.addEventListener("click", () => {
+  document.querySelectorAll("nav.tabs button").forEach((x) => x.classList.toggle("active", x === b));
+  $("tab-manual").hidden = b.dataset.tab !== "manual";
+  $("tab-auto").hidden = b.dataset.tab !== "auto";
+  if (b.dataset.tab === "auto") renderRouteSel();
+}));
+
+/* ----------------------------- botones de conexion ----------------------------- */
+$("btnConnect").onclick = () => {
+  if (connected) {
+    send("<S>", true);
+    setTimeout(() => { if (link) link.close(); if (demo) { demo.close(); } }, 150);
+    return;
+  }
+  connectBle();
+};
+
+/* Si la app se va a segundo plano (bloqueo, cambiar de app), se para el carro */
+document.addEventListener("visibilitychange", () => { if (document.hidden && connected) { send("<S>", true); if (replay) endReplay("Se pausó la app: carro detenido"); setMoving(null); } });
+
+/* ====================================================================
+   MODO PRUEBA: un carro simulado que habla el mismo protocolo (sin Bluetooth)
+   ==================================================================== */
+let demo = null;
+function makeDemo() {
+  let st = null, lead = 120, timer = null, pend = null, open = true;
+  const out = (s) => setTimeout(() => onLine(s), 30);
+  const base = (d, v) => (d === "F" || d === "B") ? 350 + 50 * v : Math.max(650, Math.min(900, 350 + 50 * v + 150));
+  function start(d, v, target) {
+    st = { d, v, target, l: 0, r: 0, t0: Date.now(), phase: "run", lastT: 0 };
+  }
+  function stop(kind) {
+    if (!st || st.phase !== "run") return;
+    st.phase = "brake"; st.kind = kind; st.tb = Date.now(); st.ms = st.tb - st.t0;
+  }
+  timer = setInterval(() => {
+    if (!st) return;
+    const now = Date.now();
+    if (st.phase === "run") {
+      const rate = Math.max(0, base(st.d, st.v) - 360) * 8 * 0.05;       // cuentas en 50 ms
+      st.l += rate * (1 + (Math.random() - 0.5) * 0.04);
+      st.r += rate * (1 + (Math.random() - 0.5) * 0.04);
+      const m = (st.l + st.r) / 2;
+      if (Math.abs(st.l - st.r) > 3) { const c = (st.l + st.r) / 2; st.l = c + (st.l - c) * 0.5; st.r = c + (st.r - c) * 0.5; }
+      if (st.target && m >= st.target - lead) stop("meta");
+      if (now - st.lastT >= 300) { st.lastT = now; out(`T,${Math.round(st.l)},${Math.round(st.r)}`); }
+    } else if (now - st.tb < 150) {
+      st.l += 4; st.r += 4;                                               // sigue un poco al frenar
+    } else if (now - st.tb >= 400) {
+      const l = Math.round(st.l), r = Math.round(st.r);
+      if (st.target) out(st.kind === "meta" ? `D,${st.d},${l},${r},${st.ms}` : `X,${st.kind},${l},${r}`);
+      else out(`E,${st.d},${st.v},${l},${r},${st.ms}`);
+      st = null;
+      if (pend) { const p = pend; pend = null; start(p.d, p.v, p.target); }
+    }
+  }, 50);
+  function frame(f) {
+    if (f === "K") return;
+    if (f === "?") return out("H,CARRO,5");
+    if (f === "S") { pend = null; return stop("S"); }
+    let m = /^([FBLR])([1-9])?$/.exec(f);
+    if (m) {
+      const v = +(m[2] || 5);
+      if (st && st.phase === "run" && !st.target && st.d === m[1]) { st.v = v; return; }
+      if (!st) return start(m[1], v, 0);
+      pend = { d: m[1], v, target: 0 }; return stop("cambio");
+    }
+    m = /^P,([FBLR]),([1-9]),(\d+)$/.exec(f);
+    if (m) { const p = { d: m[1], v: +m[2], target: +m[3] }; if (!st) start(p.d, p.v, p.target); else { pend = p; stop("cambio"); } return; }
+    out("X,comando mal,0,0");
+  }
+  return {
+    send(text) { (text.match(/<([^<>]*)>/g) || []).forEach((t) => frame(t.slice(1, -1))); return Promise.resolve(); },
+    close() { if (!open) return; open = false; clearInterval(timer); demo = null; document.body.classList.remove("demo"); onDisconnected(); },
+  };
+}
+
+$("btnDemo").onclick = () => {
+  if (connected) return;
+  demo = makeDemo();
+  link = demo;
+  document.body.classList.add("demo");
+  onConnected("carro simulado");
+};
+
+/* ----------------------------- inicio ----------------------------- */
+renderSteps();
+renderSaved();
+setStatus();
+if (!navigator.bluetooth) log("Este navegador no tiene Web Bluetooth: ábrelo en Bluefy (iPhone) o Chrome (Android/PC).");
+</script>
+</body>
+</html>
