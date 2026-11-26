@@ -194,14 +194,14 @@
       <h2>Conexión</h2>
       <div id="btInfo"></div>
       <div class="row btns">
-        <button id="btnScanAll" class="primary">Buscar todos</button>
-        <button id="btnScanHm">Solo HM-10</button>
+        <button id="btnScanHm" class="primary">Solo HM-10</button>
+        <button id="btnScanAll">Buscar todos</button>
       </div>
       <div class="row btns">
         <button id="btnPing">Probar carro</button>
         <button id="btnDisc">Desconectar</button>
       </div>
-      <p class="hint">"Buscar todos" abre la lista de Bluefy con todos los dispositivos Bluetooth que hay cerca. Elige tu HM-10 y queda conectado.</p>
+      <p class="hint">"Solo HM-10" abre la lista de Bluefy solo con módulos HM-10: elige el tuyo y queda conectado. "Buscar todos" enseña todo lo que hay cerca; los que salen como "undefined" o sin nombre no son tu módulo.</p>
     </div>
 
     <div class="card" id="scanCard" hidden>
@@ -250,6 +250,9 @@ const mm = (c) => (c * MM_PER_COUNT).toFixed(1);
 const avg = (s) => Math.round((s.l + s.r) / 2);
 const load = (k, d) => { try { const v = JSON.parse(localStorage.getItem(k)); return v ?? d; } catch (e) { return d; } };
 const store = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
+const errText = (e) => { const t = e && (e.message || e.name); return t ? String(t) : (e != null && String(e) !== "undefined" && String(e) !== "[object Object]" ? String(e) : "Bluefy no dio detalles"); };
+const isCancel = (e) => !!e && (e.name === "NotFoundError" || /cancel/i.test(errText(e)));
+const devName = (n) => (n && n !== "undefined" && n !== "null" ? String(n) : "(sin nombre)");
 
 let link = null;            // { send(text), close() }
 let connected = false, carOk = false;
@@ -295,7 +298,7 @@ const bleLink = {
     pendingWrites++;
     writeChain = writeChain.then(async () => {
       for (let i = 0; i < data.length; i += 20) await writeChunk(data.slice(i, i + 20));   // el HM-10 acepta 20 bytes por paquete
-    }).catch((e) => log("✖ no se pudo escribir: " + e.message))
+    }).catch((e) => log("✖ no se pudo escribir: " + errText(e)))
       .finally(() => pendingWrites--);
     return writeChain;
   },
@@ -318,8 +321,8 @@ async function pickDevice(onlyHm) {
   try {
     return await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: [SERVICE] });
   } catch (e) {
-    if (e.name === "NotFoundError" || /cancel/i.test(e.message)) throw e;      // el usuario cerro la lista
-    log("acceptAllDevices no funcionó (" + e.message + "), busco por nombre/servicio");
+    if (isCancel(e)) throw e;      // el usuario cerro la lista
+    log("acceptAllDevices no funcionó (" + errText(e) + "), busco por nombre/servicio");
     return await navigator.bluetooth.requestDevice({
       filters: HM_FILTERS,
       optionalServices: [SERVICE],
@@ -334,7 +337,7 @@ async function connectBle(mode) {
     return;
   }
   try {
-    const d = (mode || !device) ? await pickDevice(mode === "hm10") : device;
+    const d = (mode || !device) ? await pickDevice(mode !== "all") : device;
     await openDevice(d);
   } catch (e) { connectError(e); }
 }
@@ -342,10 +345,11 @@ async function connectBle(mode) {
 function connectTo(d) { openDevice(d).catch(connectError); }
 
 function connectError(e) {
-  log("✖ " + e.message);
-  if (/cancel/i.test(e.message) || e.name === "NotFoundError") { setStatus(); return; }
-  if (/FFE0/.test(e.message)) { device = null; toast("Ese dispositivo no es un HM-10: no tiene el servicio FFE0. Elige otro.", "warn"); }
-  else toast("No se conectó: " + e.message, "warn");
+  const t = errText(e);
+  log("✖ " + t);
+  if (isCancel(e)) { setStatus(); return; }
+  if (/FFE0/.test(t)) { device = null; toast("Ese dispositivo no es un HM-10: no tiene el servicio FFE0. Elige otro.", "warn"); }
+  else toast("No se conectó (" + t + "). Revisa que el HM-10 tenga corriente y usa \"Solo HM-10\".", "warn");
   charac = null;
   setStatus();
 }
@@ -371,7 +375,7 @@ async function openDevice(d) {
   charac.addEventListener("characteristicvaluechanged", onNotify);
   await charac.startNotifications();
   link = bleLink;
-  btInfo = { name: d.name || "(sin nombre)", id: d.id, props: charac.properties, ping: null };
+  btInfo = { name: devName(d.name), id: d.id, props: charac.properties, ping: null };
   remember(d);
   onConnected(btInfo.name);
   renderKnown();
@@ -773,7 +777,7 @@ const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&l
 const looksHm = (n) => /HM|BT0?5|MLT|DSD|JDY|CC41/i.test(n || "");
 
 function remember(d) {
-  known = [{ name: d.name || "(sin nombre)", id: d.id, t: Date.now() }, ...known.filter((k) => k.id !== d.id)].slice(0, 8);
+  known = [{ name: devName(d.name), id: d.id, t: Date.now() }, ...known.filter((k) => k.id !== d.id)].slice(0, 8);
   store("carro_bt_conocidos", known);
 }
 
@@ -831,7 +835,7 @@ async function liveScan() {                          // solo si el navegador dej
   try {
     const scan = await navigator.bluetooth.requestLEScan({ acceptAllAdvertisements: true });
     const onAdv = (e) => {
-      const name = e.name || e.device.name || "(sin nombre)";
+      const name = devName(e.name || e.device.name);
       seen.set(e.device.id, { dev: e.device, name, rssi: e.rssi, hm: looksHm(name) || (e.uuids || []).some((u) => /ffe0/i.test(String(u))) });
       draw();
     };
@@ -840,7 +844,7 @@ async function liveScan() {                          // solo si el navegador dej
     scanning = { stop() { try { scan.stop(); } catch (e) {} navigator.bluetooth.removeEventListener("advertisementreceived", onAdv); clearTimeout(timer); scanning = null; btn.textContent = "Escanear"; } };
     btn.textContent = "Detener";
     draw();
-  } catch (e) { toast("No se pudo escanear: " + e.message, "warn"); }
+  } catch (e) { toast("No se pudo escanear: " + errText(e), "warn"); }
 }
 
 $("btnScanAll").onclick = () => connectBle("all");
