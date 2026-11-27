@@ -282,6 +282,7 @@ let replay = null;          // { steps, i, res, timer, name }
 let curMove = null;         // movimiento manual en curso { d, v, t0, gotE }
 let pend = null;            // movimiento que termino y espera su E del carro { d, v, ms, timer }
 let keepTimer = null, helloTimer = null;
+let userClose = false, reconnecting = false, nDisc = 0;   // reconexion automatica (v6)
 let lastRun = null;         // resultado de la ultima repeticion (para mostrarlo al terminar)
 
 /* ----------------------------- registro y avisos ----------------------------- */
@@ -436,12 +437,36 @@ function dropLink() {
 function onDisconnected(ev) {
   if (ev && ev.target && ev.target !== device) return;   // aviso tardio de un modulo anterior
   if (!connected && !link) { setStatus(); return; }
+  const wasMoving = curMove ? ((performance.now() - curMove.t0) / 1000).toFixed(1) + " s después de mandar " + curMove.d : (replay ? "repitiendo ruta" : "parado");
   dropLink();
-  log("✖ desconectado");
+  nDisc++;
+  log("✖ desconectado #" + nDisc + " (" + wasMoving + ")" + (userClose ? " por el botón" : ""));
   if (replay) endReplay("Se perdió la conexión: el carro se para solo en 2 s.");
   setMoving(null);
   setStatus();
-  toast("Se desconectó el carro", "warn");
+  const auto = ev && !userClose && device && !reconnecting;
+  userClose = false;
+  if (auto) autoReconnect(); else toast("Se desconectó el carro", "warn");
+}
+
+/* v6: si el Bluetooth se cae solo, vuelve a conectar al mismo HM-10 (el carro ya se paro solo) */
+async function autoReconnect() {
+  reconnecting = true;
+  const pausas = [400, 1000, 1500, 2500, 3000, 3000];
+  for (let i = 0; i < pausas.length; i++) {
+    await wait(pausas[i]);
+    if (connected || userClose || !device) break;
+    setStatus("Reconectando… " + (i + 1) + "/" + pausas.length, "mid");
+    try {
+      await openDevice(device);
+      log("✔ reconectado solo (intento " + (i + 1) + ")");
+      toast("Se cortó el Bluetooth y se reconectó solo ✓");
+      break;
+    } catch (e) { log("✖ reintento " + (i + 1) + ": " + errText(e)); charac = null; }
+  }
+  reconnecting = false;
+  if (!connected) { setStatus(); if (!userClose) toast("Se desconectó el carro y no se pudo reconectar. Pícale a Reconectar.", "warn"); }
+  userClose = false;
 }
 
 function send(text, quiet) {
@@ -774,10 +799,12 @@ document.querySelectorAll("nav.tabs button").forEach((b) => b.addEventListener("
 /* ----------------------------- botones de conexion ----------------------------- */
 $("btnConnect").onclick = () => {
   if (connected) {
+    userClose = true;
     send("<S>", true);
     setTimeout(() => { if (link) link.close(); if (demo) { demo.close(); } }, 150);
     return;
   }
+  if (reconnecting) { userClose = true; return; }    // cancela la reconexion automatica
   connectBle();
 };
 
