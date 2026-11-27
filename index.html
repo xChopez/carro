@@ -108,7 +108,7 @@
 <body>
 
 <header>
-  <h1>Carro<small>HM-10 · Bluefy · v9</small></h1>
+  <h1>Carro<small>HM-10 · Bluefy · v10</small></h1>
   <div id="status" class="pill">Desconectado</div>
 </header>
 <div class="connect">
@@ -541,6 +541,9 @@ function onLine(line) {
       break;
     case "I":                                              // v8: eventos del carro
       regCarEvent(p);
+      if (replay && !replay.paused && replay.toFn && /^(OBSTACULO|DESVIO_FIN)$/.test(p[1])) {   // v10: el desvio tarda: no cortar el paso
+        clearTimeout(replay.timer); replay.timer = setTimeout(replay.toFn, 60000);
+      }
       break;
     case "H":
       if (pingT0) { btInfo.ping = Math.round(performance.now() - pingT0); pingT0 = 0; }
@@ -875,18 +878,20 @@ function sendStep() {
   }
   if (!send(`<P,${s.d},${s.v},${avg(s)}>`)) { endReplay("Sin conexión"); return; }
   clearTimeout(replay.timer);
-  replay.timer = setTimeout(() => {                       // v7: no llegó la D del carro: no se abandona la ruta
+  replay.toFn = () => {                                   // v7: no llegó la D del carro: no se abandona la ruta
     if (!replay) return;
     log(`⚠ paso ${i + 1}: el carro no confirmó a tiempo, sigo con el siguiente`);
     replay.ownStop = true; send("<S>");
     replay.timer = setTimeout(() => replayStepDone(0, 0), 1200);
-  }, Math.max(8000, s.ms * 3 + 5000));
+  };
+  replay.timer = setTimeout(replay.toFn, Math.max(8000, s.ms * 3 + 5000));
 }
 
 /* v7: el carro rechazó o canceló el paso */
 function replayX(why) {
   if (!replay || replay.paused) return;
   if (replay.ownStop) { replay.ownStop = false; return; }           // fue nuestro <S> (paso por tiempo o sin confirmar)
+  if (why === "bloqueado") { endReplay(`🚧 Obstáculo en el paso ${replay.i + 1}: no se pudo rodear, carro detenido`); toast("🚧 No pudo rodear el obstáculo", "warn"); return; }
   replay.retry = (replay.retry || 0) + 1;
   if (replay.retry > 3) { endReplay(`El carro canceló el paso ${replay.i + 1} varias veces (${why})`); return; }
   const done = replay.prog || 0;
@@ -989,6 +994,19 @@ function regCarEvent(p) {
   else if (t === "HUECO_IMU") regEvent(+p[3], "HUECO_IMU", p[2] + " ms sin dato");
   else if (t === "GIRO") regEvent(+p[6], +p[2] ? "GIRO_CONFIRMADO" : "GIRO_NO_CONFIRMADO",
     (+p[3] / 10).toFixed(1) + " grados, " + p[4] + " toques, " + (+p[5] ? "con IMU" : "SIN IMU") + ", " + p[6] + " ms" + (+p[7] ? ", el IMU se reinicio " + p[7] + " veces durante el giro" : ""));
+  else if (t === "OBSTACULO") {                          // v10: I,OBSTACULO,mm,L|R,faltaba_mm,n,t
+    regEvent(+p[6], "OBSTACULO", `a ${p[2]} mm, lo rodea por la ${p[3] === "L" ? "izquierda" : "derecha"}, faltaban ${p[4]} mm del tramo (desvío #${p[5]})`);
+    log(`🚧 obstáculo a ${p[2]} mm: lo rodea por la ${p[3] === "L" ? "izquierda" : "derecha"}`);
+    toast(`🚧 Obstáculo a ${(+p[2] / 10).toFixed(0)} cm: rodeándolo por la ${p[3] === "L" ? "izquierda" : "derecha"}`, "warn");
+    if (replay) autoStatus(`🚧 Paso ${replay.i + 1}: rodeando un obstáculo…`);
+  } else if (t === "DESVIO_FIN") {                       // I,DESVIO_FIN,faltan_mm,n,t
+    regEvent(+p[4], "RETOMA_RUTA", `regresó a la línea, faltan ${p[2]} mm del tramo (desvío #${p[3]})`);
+    log(`↩ regresó a la línea: faltan ${p[2]} mm`);
+    toast("↩ Obstáculo rodeado: sigue la ruta");
+    if (replay) autoStatus(`Paso ${replay.i + 1}: retomando la ruta (faltan ${(+p[2] / 10).toFixed(0)} cm)`);
+  } else if (t === "DESVIO_FALLO") {
+    regEvent(+p[3], "DESVIO_FALLO", "no pudo rodear el obstáculo (desvío #" + p[2] + ")");
+  }
   else if (t === "REGISTRO") regEvent(+p[3], +p[2] ? "REGISTRO_ACTIVO_EN_CARRO" : "REGISTRO_APAGADO_EN_CARRO", "");
   else regEvent("", "AVISO", p.slice(1).join(" "));
 }
