@@ -108,7 +108,7 @@
 <body>
 
 <header>
-  <h1>Carro<small>HM-10 · Bluefy · v10</small></h1>
+  <h1>Carro<small>HM-10 · Bluefy · v11</small></h1>
   <div id="status" class="pill">Desconectado</div>
 </header>
 <div class="connect">
@@ -133,6 +133,11 @@
         <div>Izq<br><b id="liveL">0.0</b> mm</div>
         <div>Der<br><b id="liveR">0.0</b> mm</div>
       </div>
+    </div>
+
+    <div class="card live" id="gpsCard">
+      <div class="what" style="font-size:16px">🛰 GPS</div>
+      <div class="nums" style="max-width:75%"><div id="gpsTxt">sin datos del carro</div></div>
     </div>
 
     <div class="card speed">
@@ -291,6 +296,25 @@ const MIN_COUNTS = 20;                                 // movimientos mas cortos
 const NAMES = { F: "Adelante", B: "Atrás", L: "Gira izquierda", R: "Gira derecha", W: "Waypoint" };
 const ARROWS = { F: "▲", B: "▼", L: "◀", R: "▶", W: "📍" };
 const WP_MS = 10000;                                   // v9: parada en cada waypoint (lo pide el reto: 10 s)
+const GPS_OK_M = 5;                                    // v11: el NEO-6M falla ~2-5 m: "llegó" si queda a menos de esto
+let gps = null;                                        // ultimo dato del GPS { lat, lon, fix, sats, hdop, age, t }
+function gpsSnap() { return (gps && gps.fix && Date.now() - gps.t < 3000) ? { lat: gps.lat, lon: gps.lon, h: gps.hdop } : null; }
+function gpsDist(a, b) { const k = Math.PI / 180, x = (b.lon - a.lon) * k * Math.cos((a.lat + b.lat) / 2 * k), y = (b.lat - a.lat) * k; return Math.hypot(x, y) * 6371000; }
+function gpsCheck(g) {                                 // compara la posicion actual con la grabada
+  const now = gpsSnap();
+  if (!g) return { ok: null, txt: "GPS: ese punto se grabó sin GPS" };
+  if (!now) return { ok: null, txt: "GPS: sin señal ahora" };
+  const d = gpsDist(g, now);
+  return { ok: d <= GPS_OK_M, d, txt: d <= GPS_OK_M ? `GPS ✓ llegó: a ${d.toFixed(1)} m del punto grabado` : `GPS ⚠ a ${d.toFixed(1)} m del punto grabado` };
+}
+function gpsShow() {
+  const el = $("gpsTxt"); if (!el) return;
+  if (!gps) { el.textContent = connected ? "esperando datos…" : "sin datos del carro"; el.style.color = ""; return; }
+  if (gps.age > 5000) { el.textContent = "no llegan datos del GPS (revisa TX del GPS → PD2)"; el.style.color = "var(--stop)"; return; }
+  if (!gps.fix) { el.textContent = `buscando satélites… (${gps.sats} sat)`; el.style.color = "var(--warn)"; return; }
+  el.innerHTML = `<b>${gps.lat.toFixed(6)}, ${gps.lon.toFixed(6)}</b><br>${gps.sats} sat · ±${Math.max(2.5, gps.hdop * 2.5).toFixed(1)} m`;
+  el.style.color = "";
+}
 const wpNum = (steps, i) => steps.slice(0, i + 1).filter((x) => x.d === "W").length;
 
 const $ = (id) => document.getElementById(id);
@@ -467,7 +491,7 @@ function onConnected(name) {
 }
 
 function dropLink() {
-  connected = false; carOk = false; charac = null; link = null;
+  connected = false; carOk = false; charac = null; link = null; gps = null; setTimeout(gpsShow, 0);
   clearInterval(keepTimer);
 }
 
@@ -533,7 +557,7 @@ function setStatus(text, kind) {
 /* ----------------------------- mensajes del carro ----------------------------- */
 function onLine(line) {
   const p = line.split(",");
-  if (p[0] !== "T" && p[0] !== "Q") log("← " + line);
+  if (p[0] !== "T" && p[0] !== "Q" && p[0] !== "G") log("← " + line);
   switch (p[0]) {
     case "Q":                                              // v8: telemetria completa
       imuLive(+p[14], +p[15]);
@@ -544,6 +568,10 @@ function onLine(line) {
       if (replay && !replay.paused && replay.toFn && /^(OBSTACULO|DESVIO_FIN)$/.test(p[1])) {   // v10: el desvio tarda: no cortar el paso
         clearTimeout(replay.timer); replay.timer = setTimeout(replay.toFn, 60000);
       }
+      break;
+    case "G":                                              // v11: G,lat*1e6,lon*1e6,fix,sats,hdop*10,ms_sin_datos
+      gps = { lat: +p[1] / 1e6, lon: +p[2] / 1e6, fix: +p[3], sats: +p[4], hdop: +p[5] / 10, age: +p[6], t: Date.now() };
+      gpsShow();
       break;
     case "H":
       if (pingT0) { btInfo.ping = Math.round(performance.now() - pingT0); pingT0 = 0; }
@@ -562,6 +590,7 @@ function onLine(line) {
       $("liveL").textContent = mm(st.l);
       $("liveR").textContent = mm(st.r);
       if ($("rec").checked && avg(st) >= MIN_COUNTS && !replay) {
+        st.g = gpsSnap();                                  // v11: donde quedo el carro al terminar el paso
         route.push(st);
         store("carro_ruta_actual", route);
         renderSteps();
@@ -624,7 +653,7 @@ function savePend() {
   if (!p) return;
   clearTimeout(p.timer);
   if (!$("rec").checked) return;
-  route.push({ d: p.d, v: p.v, l: 0, r: 0, ms: p.ms, t: 1 });
+  route.push({ d: p.d, v: p.v, l: 0, r: 0, ms: p.ms, t: 1, g: gpsSnap() });
   store("carro_ruta_actual", route);
   renderSteps();
   toast(`Guardado ${route.length}: ${NAMES[p.d]} ${(p.ms / 1000).toFixed(1)} s (por tiempo)`);
@@ -637,11 +666,12 @@ function addWaypoint() {
   clearTimeout(wpPending); wpPending = null;
   if (!$("rec").checked) { toast("Carro detenido. Activa \"Grabando\" para guardar waypoints", "warn"); return; }
   if (route.length && route[route.length - 1].d === "W") { toast("Ya hay un waypoint aquí"); return; }
-  route.push({ d: "W", v: 0, l: 0, r: 0, ms: WP_MS });
+  route.push({ d: "W", v: 0, l: 0, r: 0, ms: WP_MS, g: gpsSnap() });
   store("carro_ruta_actual", route);
   renderSteps();
   const n = wpNum(route, route.length - 1);
-  log("📍 waypoint " + n + " guardado (paso " + route.length + ")");
+  const gw = route[route.length - 1].g;
+  log("📍 waypoint " + n + " guardado (paso " + route.length + ")" + (gw ? ` GPS ${gw.lat.toFixed(6)}, ${gw.lon.toFixed(6)}` : " sin GPS"));
   toast(`📍 Waypoint ${n} guardado: en Automático se para aquí ${WP_MS / 1000} s`);
 }
 function waypointBtn() {
@@ -687,7 +717,7 @@ function twoTap(btn, fn, ask) {
 /* ----------------------------- ruta grabada ----------------------------- */
 function stepText(s, i, steps) {
   if (s.d === "W") return `<span class="txt">📍 Waypoint ${wpNum(steps || route, i)}
-    <small>se para aquí ${(s.ms || WP_MS) / 1000} s en Automático</small></span>`;
+    <small>se para aquí ${(s.ms || WP_MS) / 1000} s en Automático${s.g ? " · 🛰 con GPS" : ""}</small></span>`;
   if (s.t) return `<span class="txt">${NAMES[s.d]} · vel ${s.v}
     <small>⏱ ${(s.ms / 1000).toFixed(1)} s · guardado por tiempo (el carro no mandó encoders)</small></span>`;
   return `<span class="txt">${NAMES[s.d]} · vel ${s.v}
@@ -827,7 +857,13 @@ function playRoute() {
 function sendStep() {
   if (!replay) return;
   const { steps, i } = replay;
-  if (i >= steps.length) { endReplay("Ruta terminada ✓"); toast("Ruta terminada ✓"); return; }
+  if (i >= steps.length) {
+    const last = [...steps].reverse().find((x) => x.g);    // v11: compara con el ultimo punto grabado con GPS
+    const gc = last ? gpsCheck(last.g) : { ok: null, txt: "GPS: la ruta se grabó sin GPS" };
+    regEvent("", "RUTA_TERMINADA", gc.txt);
+    log("🏁 ruta terminada · " + gc.txt);
+    endReplay("Ruta terminada ✓ · " + gc.txt); toast("Ruta terminada ✓ · " + gc.txt, gc.ok === false ? "warn" : undefined); return;
+  }
   const s0 = steps[i];
   const s = { ...s0 };
   if (replay.resumeFrom > 0 && !s.t && (s.d === "F" || s.d === "B")) {   // sigue un paso cortado: solo lo que faltaba
@@ -844,9 +880,10 @@ function sendStep() {
     clearTimeout(replay.timer); clearInterval(replay.tick);
     const t0 = Date.now();
     replay.wpLeft = Math.ceil(dur / 1000);
-    log(`📍 llegó al waypoint ${n}: parado ${dur / 1000} s`);
-    regEvent("", "WAYPOINT_LLEGO", "waypoint " + n + ", paso " + (i + 1) + ", espera " + dur / 1000 + " s");
-    toast(`📍 Waypoint ${n}: parado ${dur / 1000} s`);
+    const gc = gpsCheck(s.g);
+    log(`📍 llegó al waypoint ${n}: parado ${dur / 1000} s · ${gc.txt}`);
+    regEvent("", "WAYPOINT_LLEGO", "waypoint " + n + ", paso " + (i + 1) + ", espera " + dur / 1000 + " s · " + gc.txt);
+    toast(`📍 Waypoint ${n}: parado ${dur / 1000} s · ${gc.txt}`, gc.ok === false ? "warn" : undefined);
     const show = () => {
       if (!replay || replay.paused || replay.i !== idx) { if (replay) clearInterval(replay.tick); return; }
       replay.wpLeft = Math.max(0, Math.ceil((dur - (Date.now() - t0)) / 1000));
@@ -951,7 +988,8 @@ $("btnAutoStop").addEventListener("pointerdown", (e) => { e.preventDefault(); se
    app -> carro:  <Q1> empieza   <Q0> termina */
 const REG_COLS = ["hora_celular", "t_carro_ms", "tipo", "cmd", "modo", "rumbo_deg", "error_rumbo_deg", "giro_dps", "u_correccion",
   "pwm_izq", "pwm_der", "enc_izq_mm", "enc_der_mm", "vel_izq_mms", "vel_der_mms", "imu_estado", "imu_sin_dato_ms",
-  "imu_errores_total", "i2c_recuperaciones", "picos_descartados", "giro_fase", "giro_toques", "lateral_mm", "evento", "detalle", "imu_reinicios"];
+  "imu_errores_total", "i2c_recuperaciones", "picos_descartados", "giro_fase", "giro_toques", "lateral_mm", "evento", "detalle", "imu_reinicios",
+  "gps_lat", "gps_lon", "gps_fix", "gps_sats"];
 const IMU_TXT = ["PERDIDO", "calibrando", "OK"];
 let reg = load("carro_registro", []), regOn = load("carro_registro_on", false), regDirty = 0, regDrawT = 0;
 function hora() {
@@ -969,7 +1007,8 @@ function regData(p) {
   const n = (i) => (p[i] === undefined || p[i] === "" ? "" : +p[i]);
   const d = (i, k) => (p[i] === undefined || p[i] === "" ? "" : +p[i] / k);
   regPush([hora(), n(1), "dato", p[2] || "", n(3), d(4, 100), d(5, 100), d(6, 10), n(7), n(8), n(9), n(10), n(11), n(12), n(13),
-    n(14), n(15), n(16), n(17), n(18), n(19), n(20), d(21, 10), "", "", n(22)]);
+    n(14), n(15), n(16), n(17), n(18), n(19), n(20), d(21, 10), "", "", n(22),
+    gps ? gps.lat.toFixed(6) : "", gps ? gps.lon.toFixed(6) : "", gps ? gps.fix : "", gps ? gps.sats : ""]);
 }
 function regEvent(tCar, name, detail) {
   if (!regOn) return;
@@ -1128,7 +1167,9 @@ function makeDemo() {
     if (!st || st.phase !== "run") return;
     st.phase = "brake"; st.kind = kind; st.tb = Date.now(); st.ms = st.tb - st.t0;
   }
+  let gtick = 0;
   timer = setInterval(() => {
+    if (++gtick % 20 === 0) out(`G,${25651000 + Math.round(Math.random() * 8)},${-100289000 + Math.round(Math.random() * 8)},1,8,12,150`);
     if (!st) return;
     const now = Date.now();
     if (st.phase === "run") {
