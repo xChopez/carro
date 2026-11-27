@@ -55,6 +55,8 @@
   .pad button.active{background:var(--go);border-color:var(--go);color:#fff}
   .pad button.active span{color:#d9ffe9}
   .hint{color:var(--muted);font-size:13px;margin:8px 2px 0}
+  .wpbtn{width:100%;margin-top:10px;min-height:56px;font-size:18px;font-weight:800;background:#3a2a07;border-color:var(--warn);color:#ffd27a;border-radius:16px}
+  ol.steps li.wp .txt{color:#ffd27a}
   ol.steps{list-style:none;margin:10px 0 0;padding:0;max-height:300px;overflow:auto}
   ol.steps li{display:flex;align-items:center;gap:10px;padding:9px 4px;border-top:1px solid var(--line)}
   ol.steps li:first-child{border-top:0}
@@ -106,7 +108,7 @@
 <body>
 
 <header>
-  <h1>Carro<small>HM-10 · Bluefy · v8</small></h1>
+  <h1>Carro<small>HM-10 · Bluefy · v9</small></h1>
   <div id="status" class="pill">Desconectado</div>
 </header>
 <div class="connect">
@@ -146,7 +148,8 @@
       <button class="dir r" data-d="R">▶<span>Derecha</span></button>
       <button class="dir b" data-d="B">▼<span>Atrás</span></button>
     </div>
-    <p class="hint">Toca una flecha: el carro sigue hasta que toques STOP u otra flecha. Cada movimiento se guarda con lo que contó cada encoder.</p>
+    <button id="btnWp" class="wpbtn">📍 WAYPOINT</button>
+    <p class="hint">Toca una flecha: el carro sigue hasta que toques STOP u otra flecha. Cada movimiento se guarda con lo que contó cada encoder. <b>WAYPOINT</b> para el carro y guarda ese punto: en Automático el carro llega ahí, se detiene 10 s y sigue.</p>
 
     <div class="card">
       <div class="row">
@@ -285,8 +288,10 @@ const HM_FILTERS = [{ services: [SERVICE] }, { namePrefix: "HM" }, { namePrefix:
                     { namePrefix: "MLT" }, { namePrefix: "JDY" }, { namePrefix: "CC41" }];
 const MM_PER_COUNT = Math.PI * 65 / (11 * 4 * 90);   // 0.0516 mm por cuenta
 const MIN_COUNTS = 20;                                 // movimientos mas cortos no se guardan (toques)
-const NAMES = { F: "Adelante", B: "Atrás", L: "Gira izquierda", R: "Gira derecha" };
-const ARROWS = { F: "▲", B: "▼", L: "◀", R: "▶" };
+const NAMES = { F: "Adelante", B: "Atrás", L: "Gira izquierda", R: "Gira derecha", W: "Waypoint" };
+const ARROWS = { F: "▲", B: "▼", L: "◀", R: "▶", W: "📍" };
+const WP_MS = 10000;                                   // v9: parada en cada waypoint (lo pide el reto: 10 s)
+const wpNum = (steps, i) => steps.slice(0, i + 1).filter((x) => x.d === "W").length;
 
 const $ = (id) => document.getElementById(id);
 const mm = (c) => (c * MM_PER_COUNT).toFixed(1);
@@ -475,7 +480,7 @@ function onDisconnected(ev) {
   if (regOn) regEvent("", "BLE_DESCONECTADO", wasMoving);
   log("✖ desconectado #" + nDisc + " (" + wasMoving + ")" + (userClose ? " por el botón" : ""));
   if (replay) {                                        // v7: la ruta se pausa y sigue al reconectar
-    clearTimeout(replay.timer); replay.paused = true;
+    clearTimeout(replay.timer); clearInterval(replay.tick); replay.wpLeft = null; replay.paused = true;
     autoStatus(`Pausada en el paso ${replay.i + 1}: se cortó el Bluetooth, reconectando…`);
   }
   setMoving(null);
@@ -559,6 +564,7 @@ function onLine(line) {
         renderSteps();
         toast(`Guardado ${route.length}: ${NAMES[st.d]} ${mm(avg(st))} mm`);
       }
+      if (wpPending) addWaypoint();                        // v9: el waypoint va despues del movimiento que termino
       break;
     }
     case "D":
@@ -619,10 +625,36 @@ function savePend() {
   store("carro_ruta_actual", route);
   renderSteps();
   toast(`Guardado ${route.length}: ${NAMES[p.d]} ${(p.ms / 1000).toFixed(1)} s (por tiempo)`);
+  if (wpPending) addWaypoint();
 }
 
-function stepShort(s) { return s.t ? `⏱ ${(s.ms / 1000).toFixed(1)} s` : `${mm(avg(s))} mm`; }
+/* v9: WAYPOINT = STOP + guarda un punto donde, en Automatico, el carro se para 10 s */
+let wpPending = null;
+function addWaypoint() {
+  clearTimeout(wpPending); wpPending = null;
+  if (!$("rec").checked) { toast("Carro detenido. Activa \"Grabando\" para guardar waypoints", "warn"); return; }
+  if (route.length && route[route.length - 1].d === "W") { toast("Ya hay un waypoint aquí"); return; }
+  route.push({ d: "W", v: 0, l: 0, r: 0, ms: WP_MS });
+  store("carro_ruta_actual", route);
+  renderSteps();
+  const n = wpNum(route, route.length - 1);
+  log("📍 waypoint " + n + " guardado (paso " + route.length + ")");
+  toast(`📍 Waypoint ${n} guardado: en Automático se para aquí ${WP_MS / 1000} s`);
+}
+function waypointBtn() {
+  if (replay) { toast("En Automático los waypoints ya vienen en la ruta", "warn"); return; }
+  const moviendo = !!curMove || !!pend;
+  if (connected) send("<S>");
+  endMove();
+  setMoving(null);
+  if (!moviendo) { addWaypoint(); return; }
+  clearTimeout(wpPending);
+  wpPending = setTimeout(addWaypoint, 2000);              // si no llega la E del carro, lo guarda igual
+}
 
+function stepShort(s) { return s.d === "W" ? `parada ${(s.ms || WP_MS) / 1000} s` : s.t ? `⏱ ${(s.ms / 1000).toFixed(1)} s` : `${mm(avg(s))} mm`; }
+
+$("btnWp").addEventListener("pointerdown", (e) => { e.preventDefault(); waypointBtn(); });
 $("btnCarG").onclick = () => { if (send("<G>")) toast("El carro está grabando: maneja y luego toca Terminar"); };
 $("btnCarE").onclick = () => { if (send("<E>")) toast("Grabación terminada en el carro"); };
 $("btnCarP").onclick = () => { if (send("<P>")) toast("El carro repite su ruta (STOP para cancelar)"); };
@@ -650,7 +682,9 @@ function twoTap(btn, fn, ask) {
 }
 
 /* ----------------------------- ruta grabada ----------------------------- */
-function stepText(s) {
+function stepText(s, i, steps) {
+  if (s.d === "W") return `<span class="txt">📍 Waypoint ${wpNum(steps || route, i)}
+    <small>se para aquí ${(s.ms || WP_MS) / 1000} s en Automático</small></span>`;
   if (s.t) return `<span class="txt">${NAMES[s.d]} · vel ${s.v}
     <small>⏱ ${(s.ms / 1000).toFixed(1)} s · guardado por tiempo (el carro no mandó encoders)</small></span>`;
   return `<span class="txt">${NAMES[s.d]} · vel ${s.v}
@@ -658,11 +692,11 @@ function stepText(s) {
 }
 
 function summary(steps) {
-  let rect = 0, giro = 0, tms = 0;
-  steps.forEach((s) => { if (s.t) tms += s.ms; else if (s.d === "F" || s.d === "B") rect += avg(s); else giro += avg(s); });
+  let rect = 0, giro = 0, tms = 0, nwp = 0;
+  steps.forEach((s) => { if (s.d === "W") nwp++; else if (s.t) tms += s.ms; else if (s.d === "F" || s.d === "B") rect += avg(s); else giro += avg(s); });
   if (!steps.length) return "";
   return `${steps.length} pasos · en recta ${mm(rect)} mm · en giros ${mm(giro)} mm de llanta` +
-    (tms ? ` · por tiempo ${(tms / 1000).toFixed(1)} s` : "");
+    (tms ? ` · por tiempo ${(tms / 1000).toFixed(1)} s` : "") + (nwp ? ` · ${nwp} waypoint${nwp > 1 ? "s" : ""}` : "");
 }
 
 function renderSteps() {
@@ -670,7 +704,8 @@ function renderSteps() {
   ol.innerHTML = route.length ? "" : `<li class="empty">Todavía no hay movimientos. Maneja el carro y aquí aparece cada uno.</li>`;
   route.forEach((s, i) => {
     const li = document.createElement("li");
-    li.innerHTML = `<span class="n">${i + 1}</span><span class="ic">${ARROWS[s.d]}</span>${stepText(s)}<button class="del" title="Borrar">✕</button>`;
+    if (s.d === "W") li.className = "wp";
+    li.innerHTML = `<span class="n">${i + 1}</span><span class="ic">${ARROWS[s.d]}</span>${stepText(s, i, route)}<button class="del" title="Borrar">✕</button>`;
     li.querySelector(".del").onclick = () => { route.splice(i, 1); store("carro_ruta_actual", route); renderSteps(); };
     ol.appendChild(li);
   });
@@ -726,10 +761,15 @@ function renderAutoSteps() {
       if (i < run.i) {
         const r = run.res[i];
         li.className = "ok"; ic = "✓";
-        extra = (r && !s.t) ? `<small>hizo izq ${mm(r.l)} · der ${mm(r.r)} mm (error ${mm(Math.round((r.l + r.r) / 2) - avg(s))} mm)</small>` : "";
+        extra = (r && !s.t && s.d !== "W") ? `<small>hizo izq ${mm(r.l)} · der ${mm(r.r)} mm (error ${mm(Math.round((r.l + r.r) / 2) - avg(s))} mm)</small>` : "";
       } else if (i === run.i && run === replay) { li.className = "run"; ic = "▸"; }
       else if (i === run.i && run.bad) { li.className = "bad"; ic = "✕"; }
     }
+    if (s.d === "W") {
+      if (!li.className) li.className = "wp";
+      li.innerHTML = `<span class="n">${i + 1}</span><span class="ic">${ic}</span>
+      <span class="txt">📍 Waypoint ${wpNum(steps, i)}<small>${run && replay && run === replay && i === run.i && replay.wpLeft != null ? "esperando " + replay.wpLeft + " s…" : "parada de " + (s.ms || WP_MS) / 1000 + " s"}</small></span>`;
+    } else
     li.innerHTML = `<span class="n">${i + 1}</span><span class="ic">${ic}</span>
       <span class="txt">${NAMES[s.d]} · vel ${s.v} · ${stepShort(s)}${extra || (s.t ? "<small>por tiempo</small>" : `<small>izq ${mm(s.l)} · der ${mm(s.r)} mm</small>`)}</span>`;
     ol.appendChild(li);
@@ -795,6 +835,33 @@ function sendStep() {
   renderAutoSteps();
   autoStatus(`Paso ${i + 1} de ${steps.length}: ${NAMES[s.d]} ${stepShort(s)}`);
   $("liveWhat").textContent = `Repitiendo ${i + 1}/${steps.length}`;
+  if (s.d === "W") {                                       // v9: llego al waypoint: parado WP_MS y sigue
+    const n = wpNum(steps, i), dur = s.ms || WP_MS, idx = i;
+    replay.ownStop = true; send("<S>", true);
+    clearTimeout(replay.timer); clearInterval(replay.tick);
+    const t0 = Date.now();
+    replay.wpLeft = Math.ceil(dur / 1000);
+    log(`📍 llegó al waypoint ${n}: parado ${dur / 1000} s`);
+    regEvent("", "WAYPOINT_LLEGO", "waypoint " + n + ", paso " + (i + 1) + ", espera " + dur / 1000 + " s");
+    toast(`📍 Waypoint ${n}: parado ${dur / 1000} s`);
+    const show = () => {
+      if (!replay || replay.paused || replay.i !== idx) { if (replay) clearInterval(replay.tick); return; }
+      replay.wpLeft = Math.max(0, Math.ceil((dur - (Date.now() - t0)) / 1000));
+      autoStatus(`📍 Waypoint ${n} (paso ${idx + 1} de ${steps.length}): esperando ${replay.wpLeft} s…`);
+      $("liveWhat").textContent = `📍 Waypoint ${n}: ${replay.wpLeft} s`;
+      renderAutoSteps();
+    };
+    show();
+    replay.tick = setInterval(show, 250);
+    replay.timer = setTimeout(() => {
+      if (!replay) return;
+      clearInterval(replay.tick); replay.wpLeft = null;
+      regEvent("", "WAYPOINT_SALIO", "waypoint " + n + ", espero " + ((Date.now() - t0) / 1000).toFixed(1) + " s");
+      log(`📍 waypoint ${n}: listo, sigo`);
+      replayStepDone(0, 0);
+    }, dur);
+    return;
+  }
   if (s.t) {                                               // paso por tiempo: misma direccion el mismo tiempo
     if (!send(`<${s.d}${s.v}>`)) { endReplay("Sin conexión"); return; }
     clearTimeout(replay.timer);
@@ -837,7 +904,7 @@ function resumeReplay() {
     log(`↷ paso ${replay.i + 1} (giro) ya iba avanzado al cortarse: sigo con el siguiente`);
     replayStepDone(0, 0);
   } else {
-    replay.resumeFrom = (s && !s.t) ? done : 0;
+    replay.resumeFrom = (s && !s.t && s.d !== "W") ? done : 0;
     log(`↻ sigo la ruta en el paso ${replay.i + 1}` + (replay.resumeFrom ? ` (faltaba ${Math.max(0, avg(s) - done)} cuentas)` : ""));
     sendStep();
   }
@@ -855,7 +922,7 @@ function replayStepDone(l, r) {
 }
 
 function endReplay(msg) {
-  if (replay) clearTimeout(replay.timer);
+  if (replay) { clearTimeout(replay.timer); clearInterval(replay.tick); replay.wpLeft = null; }
   const r = replay;
   replay = null;
   if (r) { r.bad = r.i < r.steps.length && msg !== "Detenido"; lastRun = r; }   // deja visible lo que alcanzo a hacer
