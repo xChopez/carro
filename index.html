@@ -106,7 +106,7 @@
 <body>
 
 <header>
-  <h1>Carro<small>HM-10 · Bluefy</small></h1>
+  <h1>Carro<small>HM-10 · Bluefy · v8</small></h1>
   <div id="status" class="pill">Desconectado</div>
 </header>
 <div class="connect">
@@ -119,6 +119,7 @@
   <button data-tab="manual" class="active">Manual</button>
   <button data-tab="auto">Automático</button>
   <button data-tab="bt">Bluetooth</button>
+  <button data-tab="reg">Registro</button>
 </nav>
 
 <main>
@@ -229,6 +230,36 @@
       <h2>¿Cuál es mi módulo?</h2>
       <p class="hint">El HM-10 sale como <b>HMSoft</b>, <b>BT05</b>, <b>MLT-BT05</b>, <b>DSD TECH</b>, <b>JDY-08</b> o <b>CC41-A</b>. "Solo HM-10" deja en la lista solo esos. Si no aparece: revisa que tenga corriente (LED parpadeando) y que no esté conectado a otro celular. Los HC-05 y HC-06 son Bluetooth clásico: el iPhone no los puede usar.</p>
     </div>
+  </section>
+
+  <!-- ===================== REGISTRO (v8) ===================== -->
+  <section id="tab-reg" hidden>
+    <div class="card">
+      <h2>Registro para el controlador</h2>
+      <div class="row">
+        <div>IMU<br><b id="regImu">—</b></div>
+        <div>Muestras<br><b id="regN">0</b></div>
+        <div>Eventos<br><b id="regEv">0</b></div>
+      </div>
+      <div class="row btns">
+        <button id="btnRegStart" class="primary">● Grabar registro</button>
+        <button id="btnRegStop">■ Detener</button>
+      </div>
+      <div class="row btns">
+        <button id="btnRegCsv">Excel (CSV)</button>
+        <button id="btnRegTxt">Texto</button>
+      </div>
+      <div class="row btns">
+        <button id="btnRegCopy">Copiar todo</button>
+        <button id="btnRegClear">Borrar registro</button>
+      </div>
+      <p class="hint">Mientras graba, el carro manda 5 datos por segundo en movimiento (1 por segundo parado): rumbo, error, giro, corrección, PWM, encoders, velocidades y el estado del IMU. Los avisos (IMU perdido o recuperado, huecos sin dato, cada giro y cortes del Bluetooth) quedan como renglones de "evento". Sigue grabando aunque cambies de pestaña; si se corta el Bluetooth, al reconectar sigue solo.</p>
+    </div>
+    <div class="card">
+      <h2>Resumen</h2>
+      <pre id="regSum" style="white-space:pre-wrap;margin:0;font-size:13px"></pre>
+    </div>
+    <textarea id="regText" hidden readonly style="width:100%;height:160px;margin-top:12px;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:12px;font-size:11px"></textarea>
   </section>
 
   <details class="card">
@@ -421,6 +452,7 @@ function onConnected(name) {
   setStatus();
   pingT0 = performance.now();
   send("<?>");
+  if (regOn) { regEvent("", "BLE_CONECTADO", name); setTimeout(() => connected && send("<Q1>", true), 300); }
   clearInterval(keepTimer);
   keepTimer = setInterval(() => { if (connected && pendingWrites < 2) send("<K>", true); }, 500);   // "sigo aqui"
   clearTimeout(helloTimer);
@@ -440,6 +472,7 @@ function onDisconnected(ev) {
   const wasMoving = curMove ? ((performance.now() - curMove.t0) / 1000).toFixed(1) + " s después de mandar " + curMove.d : (replay ? "repitiendo ruta" : "parado");
   dropLink();
   nDisc++;
+  if (regOn) regEvent("", "BLE_DESCONECTADO", wasMoving);
   log("✖ desconectado #" + nDisc + " (" + wasMoving + ")" + (userClose ? " por el botón" : ""));
   if (replay) {                                        // v7: la ruta se pausa y sigue al reconectar
     clearTimeout(replay.timer); replay.paused = true;
@@ -495,8 +528,15 @@ function setStatus(text, kind) {
 /* ----------------------------- mensajes del carro ----------------------------- */
 function onLine(line) {
   const p = line.split(",");
-  if (p[0] !== "T") log("← " + line);
+  if (p[0] !== "T" && p[0] !== "Q") log("← " + line);
   switch (p[0]) {
+    case "Q":                                              // v8: telemetria completa
+      imuLive(+p[14], +p[15]);
+      if (regOn) regData(p);
+      break;
+    case "I":                                              // v8: eventos del carro
+      regCarEvent(p);
+      break;
     case "H":
       if (pingT0) { btInfo.ping = Math.round(performance.now() - pingT0); pingT0 = 0; }
       carOk = true; setStatus();
@@ -833,10 +873,142 @@ function stopReplay(sendStop) {
 $("btnPlay").onclick = playRoute;
 $("btnAutoStop").addEventListener("pointerdown", (e) => { e.preventDefault(); send("<S>"); stopReplay(false); });
 
+/* ----------------------------- registro de telemetria (v8) -----------------------------
+   carro -> app:  Q,t,cmd,modo,rumbo*100,error*100,giro*10,u,pwmL,pwmR,encL_mm,encR_mm,vL,vR,imu,sin_dato_ms,errores,recuperaciones,picos,fase,toques,lateral*10
+                  I,IMU_ESTADO,0|1|2,t   I,HUECO_IMU,ms,t   I,GIRO,confirmado,grados*10,toques,con_imu,ms   I,REGISTRO,0|1,t
+   app -> carro:  <Q1> empieza   <Q0> termina */
+const REG_COLS = ["hora_celular", "t_carro_ms", "tipo", "cmd", "modo", "rumbo_deg", "error_rumbo_deg", "giro_dps", "u_correccion",
+  "pwm_izq", "pwm_der", "enc_izq_mm", "enc_der_mm", "vel_izq_mms", "vel_der_mms", "imu_estado", "imu_sin_dato_ms",
+  "imu_errores_total", "i2c_recuperaciones", "picos_descartados", "giro_fase", "giro_toques", "lateral_mm", "evento", "detalle", "imu_reinicios"];
+const IMU_TXT = ["PERDIDO", "calibrando", "OK"];
+let reg = load("carro_registro", []), regOn = load("carro_registro_on", false), regDirty = 0, regDrawT = 0;
+function hora() {
+  const d = new Date();
+  return d.toLocaleTimeString("es-MX", { hour12: false }) + "." + String(d.getMilliseconds()).padStart(3, "0");
+}
+function regSave() { regDirty = 0; try { localStorage.setItem("carro_registro", JSON.stringify(reg.slice(-30000))); } catch (e) {} }
+function regPush(row) {
+  reg.push(row);
+  if (++regDirty >= 25) regSave();
+  const now = performance.now();
+  if (now - regDrawT > 500) { regDrawT = now; renderReg(); }
+}
+function regData(p) {
+  const n = (i) => (p[i] === undefined || p[i] === "" ? "" : +p[i]);
+  const d = (i, k) => (p[i] === undefined || p[i] === "" ? "" : +p[i] / k);
+  regPush([hora(), n(1), "dato", p[2] || "", n(3), d(4, 100), d(5, 100), d(6, 10), n(7), n(8), n(9), n(10), n(11), n(12), n(13),
+    n(14), n(15), n(16), n(17), n(18), n(19), n(20), d(21, 10), "", "", n(22)]);
+}
+function regEvent(tCar, name, detail) {
+  if (!regOn) return;
+  const row = new Array(REG_COLS.length).fill("");
+  row[0] = hora(); row[1] = tCar; row[2] = "evento"; row[23] = name; row[24] = detail || "";
+  regPush(row);
+  regSave();
+}
+function imuLive(st, stale) {
+  const el = $("regImu");
+  if (!el) return;
+  if (st === 2 && stale > 50) { el.textContent = "SIN DATO " + stale + " ms"; el.style.color = "var(--warn)"; }
+  else { el.textContent = IMU_TXT[st] || "—"; el.style.color = st === 2 ? "#6be3a6" : (st === 1 ? "var(--warn)" : "var(--stop)"); }
+}
+function regCarEvent(p) {
+  const t = p[0] === "I" ? p[1] : "";
+  if (t === "IMU_ESTADO") {
+    imuLive(+p[2], 0);
+    regEvent(+p[3], +p[2] === 0 ? "IMU_PERDIDO" : (+p[2] === 1 ? "IMU_CALIBRANDO" : "IMU_OK"), "estado " + p[2]);
+    if (+p[2] === 0) toast("⚠ Se perdió el IMU", "warn");
+  } else if (t === "IMU_REINICIO") { regEvent(+p[3], "IMU_REINICIO", "reinicio #" + p[2] + " del MPU6050 (caida de voltaje)"); toast("⚠ El IMU se reinició (#" + p[2] + ")", "warn"); }
+  else if (t === "HUECO_IMU") regEvent(+p[3], "HUECO_IMU", p[2] + " ms sin dato");
+  else if (t === "GIRO") regEvent(+p[6], +p[2] ? "GIRO_CONFIRMADO" : "GIRO_NO_CONFIRMADO",
+    (+p[3] / 10).toFixed(1) + " grados, " + p[4] + " toques, " + (+p[5] ? "con IMU" : "SIN IMU") + ", " + p[6] + " ms" + (+p[7] ? ", el IMU se reinicio " + p[7] + " veces durante el giro" : ""));
+  else if (t === "REGISTRO") regEvent(+p[3], +p[2] ? "REGISTRO_ACTIVO_EN_CARRO" : "REGISTRO_APAGADO_EN_CARRO", "");
+  else regEvent("", "AVISO", p.slice(1).join(" "));
+}
+function regSummary() {
+  const datos = reg.filter((r) => r[2] === "dato"), ev = reg.filter((r) => r[2] === "evento");
+  const cnt = (n) => ev.filter((r) => r[23] === n).length;
+  const huecos = ev.filter((r) => r[23] === "HUECO_IMU").map((r) => parseInt(r[24], 10) || 0);
+  const mov = datos.filter((r) => r[3] === "F" || r[3] === "B");
+  const errMax = mov.reduce((m, r) => Math.max(m, Math.abs(+r[6] || 0)), 0);
+  const giros = cnt("GIRO_CONFIRMADO") + cnt("GIRO_NO_CONFIRMADO");
+  return [
+    "Muestras de datos: " + datos.length + "   eventos: " + ev.length,
+    "IMU reiniciado (caidas de voltaje): " + cnt("IMU_REINICIO") + " veces",
+    "IMU perdido: " + cnt("IMU_PERDIDO") + " veces   huecos sin dato: " + huecos.length + (huecos.length ? " (el más largo " + Math.max(...huecos) + " ms)" : ""),
+    "Bluetooth cortado: " + cnt("BLE_DESCONECTADO") + " veces",
+    "Giros: " + giros + "   confirmados por el IMU: " + cnt("GIRO_CONFIRMADO"),
+    "Error de rumbo máximo en avance (F/B): " + errMax.toFixed(2) + " grados",
+    "Grabando: " + (regOn ? "SÍ" : "no"),
+  ].join("\n");
+}
+function renderReg() {
+  if (!$("regN")) return;
+  $("regN").textContent = reg.filter((r) => r[2] === "dato").length;
+  $("regEv").textContent = reg.filter((r) => r[2] === "evento").length;
+  $("regSum").textContent = regSummary();
+  $("btnRegStart").disabled = regOn;
+  $("btnRegStop").disabled = !regOn;
+}
+function regFile(kind) {
+  const d = new Date(), z = (x) => String(x).padStart(2, "0");
+  const stamp = d.getFullYear() + z(d.getMonth() + 1) + z(d.getDate()) + "_" + z(d.getHours()) + z(d.getMinutes());
+  const cell = (v) => { const t = String(v ?? ""); return /[",\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t; };
+  if (kind === "csv") {
+    const text = "\uFEFF" + [REG_COLS.join(",")].concat(reg.map((r) => r.map(cell).join(","))).join("\r\n");
+    return { name: "registro_carro_" + stamp + ".csv", text, type: "text/csv" };
+  }
+  const head = "# Registro del carro " + d.toLocaleString("es-MX") + "\n# " + regSummary().replace(/\n/g, "\n# ") + "\n";
+  const text = head + [REG_COLS.join("\t")].concat(reg.map((r) => r.join("\t"))).join("\n");
+  return { name: "registro_carro_" + stamp + ".txt", text, type: "text/plain" };
+}
+async function regExport(kind) {
+  if (!reg.length) { toast("El registro está vacío", "warn"); return; }
+  regSave();
+  const f = regFile(kind);
+  try {                                                  // en iPhone la hoja de compartir permite guardarlo en Archivos o mandarlo
+    const file = new File([f.text], f.name, { type: f.type });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: f.name }); return; }
+  } catch (e) { if (e && e.name === "AbortError") return; }
+  try {
+    const url = URL.createObjectURL(new Blob([f.text], { type: f.type }));
+    const a = document.createElement("a");
+    a.href = url; a.download = f.name; document.body.appendChild(a); a.click();
+    setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 5000);
+    toast("Descargando " + f.name);
+  } catch (e) { regShowText(f.text); }
+}
+function regShowText(text) {
+  const ta = $("regText");
+  ta.hidden = false; ta.value = text; ta.focus(); ta.select();
+  toast("Selecciona todo y cópialo (no se pudo descargar aquí)", "warn");
+}
+$("btnRegStart").onclick = () => {
+  regOn = true; store("carro_registro_on", true);
+  const row = new Array(REG_COLS.length).fill(""); row[0] = hora(); row[2] = "evento"; row[23] = "INICIO_REGISTRO"; reg.push(row); regSave();
+  if (connected) send("<Q1>"); else toast("Grabando: se activa en el carro en cuanto conectes", "warn");
+  renderReg();
+};
+$("btnRegStop").onclick = () => {
+  if (connected) send("<Q0>");
+  regEvent("", "FIN_REGISTRO", "");
+  regOn = false; store("carro_registro_on", false); regSave(); renderReg();
+};
+$("btnRegCsv").onclick = () => regExport("csv");
+$("btnRegTxt").onclick = () => regExport("txt");
+$("btnRegCopy").onclick = async () => {
+  if (!reg.length) { toast("El registro está vacío", "warn"); return; }
+  const t = regFile("csv").text.replace(/^\uFEFF/, "");
+  try { await navigator.clipboard.writeText(t); toast("Copiado: pégalo en Excel o en Notas"); } catch (e) { regShowText(t); }
+};
+$("btnRegClear").onclick = (e) => twoTap(e.currentTarget, () => { reg = []; regSave(); $("regText").hidden = true; renderReg(); toast("Registro borrado"); });
+renderReg();
+
 /* ----------------------------- pestañas ----------------------------- */
 document.querySelectorAll("nav.tabs button").forEach((b) => b.addEventListener("click", () => {
   document.querySelectorAll("nav.tabs button").forEach((x) => x.classList.toggle("active", x === b));
-  ["manual", "auto", "bt"].forEach((t) => ($("tab-" + t).hidden = b.dataset.tab !== t));
+  ["manual", "auto", "bt", "reg"].forEach((t) => ($("tab-" + t).hidden = b.dataset.tab !== t));
+  if (b.dataset.tab === "reg") renderReg();
   if (b.dataset.tab === "auto") renderRouteSel();
   if (b.dataset.tab === "bt") { renderBt(); renderKnown(); }
 }));
