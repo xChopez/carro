@@ -441,7 +441,10 @@ function onDisconnected(ev) {
   dropLink();
   nDisc++;
   log("✖ desconectado #" + nDisc + " (" + wasMoving + ")" + (userClose ? " por el botón" : ""));
-  if (replay) endReplay("Se perdió la conexión: el carro se para solo en 2 s.");
+  if (replay) {                                        // v7: la ruta se pausa y sigue al reconectar
+    clearTimeout(replay.timer); replay.paused = true;
+    autoStatus(`Pausada en el paso ${replay.i + 1}: se cortó el Bluetooth, reconectando…`);
+  }
   setMoving(null);
   setStatus();
   const auto = ev && !userClose && device && !reconnecting;
@@ -460,11 +463,13 @@ async function autoReconnect() {
     try {
       await openDevice(device);
       log("✔ reconectado solo (intento " + (i + 1) + ")");
+      if (replay && replay.paused) { await wait(800); resumeReplay(); }
       toast("Se cortó el Bluetooth y se reconectó solo ✓");
       break;
     } catch (e) { log("✖ reintento " + (i + 1) + ": " + errText(e)); charac = null; }
   }
   reconnecting = false;
+  if (!connected && replay) endReplay("Se perdió la conexión en el paso " + (replay.i + 1) + " y no se pudo reconectar.");
   if (!connected) { setStatus(); if (!userClose) toast("Se desconectó el carro y no se pudo reconectar. Pícale a Reconectar.", "warn"); }
   userClose = false;
 }
@@ -499,6 +504,7 @@ function onLine(line) {
     case "T":
       $("liveL").textContent = mm(+p[1]);
       $("liveR").textContent = mm(+p[2]);
+      if (replay && !replay.paused) replay.prog = Math.round((+p[1] + +p[2]) / 2);   // avance del paso actual (v7)
       break;
     case "E": {                                            // termino un movimiento manual
       if (pend) { clearTimeout(pend.timer); pend = null; }           // llego el dato real: no se guarda por tiempo
@@ -516,10 +522,10 @@ function onLine(line) {
       break;
     }
     case "D":
-      replayStepDone(+p[2], +p[3]);
+      if (replay && !replay.paused) replayStepDone(+p[2], +p[3]);
       break;
     case "X":
-      if (replay) endReplay("Paso cancelado por el carro: " + p[1]);
+      if (replay) replayX(p[1]);
       else if (!/^(S|cambio)$/.test(p[1])) toast("El carro rechazó el paso: " + p[1], "warn");
       break;
     case "W":
@@ -739,31 +745,70 @@ function sendStep() {
   if (!replay) return;
   const { steps, i } = replay;
   if (i >= steps.length) { endReplay("Ruta terminada ✓"); toast("Ruta terminada ✓"); return; }
-  const s = steps[i];
+  const s0 = steps[i];
+  const s = { ...s0 };
+  if (replay.resumeFrom > 0 && !s.t && (s.d === "F" || s.d === "B")) {   // sigue un paso cortado: solo lo que faltaba
+    s.l = s.r = Math.max(MIN_COUNTS, avg(s0) - replay.resumeFrom);
+  }
+  replay.resumeFrom = 0; replay.prog = 0;
+  log(`▶ paso ${i + 1}/${steps.length}: ${NAMES[s.d]} ${stepShort(s)}`);
   renderAutoSteps();
   autoStatus(`Paso ${i + 1} de ${steps.length}: ${NAMES[s.d]} ${stepShort(s)}`);
   $("liveWhat").textContent = `Repitiendo ${i + 1}/${steps.length}`;
   if (s.t) {                                               // paso por tiempo: misma direccion el mismo tiempo
     if (!send(`<${s.d}${s.v}>`)) { endReplay("Sin conexión"); return; }
     clearTimeout(replay.timer);
+    const tms = (s.d === "L" || s.d === "R") ? Math.max(s.ms, 3000) : s.ms;   // un giro de 90 lo termina el carro solo: no se corta antes
     replay.timer = setTimeout(() => {
       if (!replay) return;
-      send("<S>");
-      replay.timer = setTimeout(() => replayStepDone(0, 0), 700);   // espera a que se asiente
-    }, s.ms);
+      replay.ownStop = true; send("<S>");
+      replay.timer = setTimeout(() => replayStepDone(0, 0), 1200);  // espera a que se asiente y se enderece
+    }, tms);
     return;
   }
   if (!send(`<P,${s.d},${s.v},${avg(s)}>`)) { endReplay("Sin conexión"); return; }
   clearTimeout(replay.timer);
-  replay.timer = setTimeout(() => { send("<S>"); endReplay(`El paso ${i + 1} tardó demasiado; se paró el carro.`); },
-    Math.max(8000, s.ms * 3 + 5000));
+  replay.timer = setTimeout(() => {                       // v7: no llegó la D del carro: no se abandona la ruta
+    if (!replay) return;
+    log(`⚠ paso ${i + 1}: el carro no confirmó a tiempo, sigo con el siguiente`);
+    replay.ownStop = true; send("<S>");
+    replay.timer = setTimeout(() => replayStepDone(0, 0), 1200);
+  }, Math.max(8000, s.ms * 3 + 5000));
+}
+
+/* v7: el carro rechazó o canceló el paso */
+function replayX(why) {
+  if (!replay || replay.paused) return;
+  if (replay.ownStop) { replay.ownStop = false; return; }           // fue nuestro <S> (paso por tiempo o sin confirmar)
+  replay.retry = (replay.retry || 0) + 1;
+  if (replay.retry > 3) { endReplay(`El carro canceló el paso ${replay.i + 1} varias veces (${why})`); return; }
+  const done = replay.prog || 0;
+  log(`⚠ paso ${replay.i + 1} cancelado por el carro (${why}): lo repito (${replay.retry}/3)`);
+  clearTimeout(replay.timer);
+  replay.resumeFrom = (why === "ocupado") ? 0 : done;
+  replay.timer = setTimeout(sendStep, 1000);
+}
+
+function resumeReplay() {
+  if (!replay || !connected) return;
+  replay.paused = false;
+  const s = replay.steps[replay.i], done = replay.prog || 0;
+  if (s && !s.t && (s.d === "L" || s.d === "R") && done > 0.3 * avg(s)) {   // el giro ya iba avanzado: no se repite
+    log(`↷ paso ${replay.i + 1} (giro) ya iba avanzado al cortarse: sigo con el siguiente`);
+    replayStepDone(0, 0);
+  } else {
+    replay.resumeFrom = (s && !s.t) ? done : 0;
+    log(`↻ sigo la ruta en el paso ${replay.i + 1}` + (replay.resumeFrom ? ` (faltaba ${Math.max(0, avg(s) - done)} cuentas)` : ""));
+    sendStep();
+  }
+  toast(`Ruta reanudada en el paso ${replay.i + 1}`);
 }
 
 function replayStepDone(l, r) {
   if (!replay) return;
   clearTimeout(replay.timer);
   replay.res[replay.i] = { l, r };
-  replay.i++;
+  replay.i++; replay.retry = 0; replay.ownStop = false; replay.prog = 0;
   renderAutoSteps();
   const pause = Math.max(0, +$("pause").value || 0);
   replay.timer = setTimeout(sendStep, pause);
