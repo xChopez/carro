@@ -46,7 +46,8 @@
   .live .nums b{color:var(--text);font-variant-numeric:tabular-nums;font-size:17px}
   .speed{display:flex;align-items:center;gap:12px}
   .speed input{flex:1;accent-color:var(--accent)}
-  .speed b{font-size:24px;width:26px;text-align:center}
+  .speed b{font-size:24px;min-width:26px;text-align:center}
+  .speed b small{display:block;font-size:12px;color:var(--muted);font-weight:500}
   .pad{display:grid;grid-template-columns:repeat(3,1fr);grid-template-areas:". f ." "l s r" ". b .";gap:10px;margin-top:12px}
   .pad button{min-height:88px;font-size:30px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;border-radius:16px}
   .pad button span{font-size:12px;color:var(--muted)}
@@ -108,7 +109,7 @@
 <body>
 
 <header>
-  <h1>Carro<small>HM-10 · Bluefy · v11</small></h1>
+  <h1>Carro<small>HM-10 · Bluefy · v12</small></h1>
   <div id="status" class="pill">Desconectado</div>
 </header>
 <div class="connect">
@@ -319,7 +320,12 @@ const wpNum = (steps, i) => steps.slice(0, i + 1).filter((x) => x.d === "W").len
 
 const $ = (id) => document.getElementById(id);
 const mm = (c) => (c * MM_PER_COUNT).toFixed(1);
-const avg = (s) => Math.round((s.l + s.r) / 2);
+const avg = (s) => {                                   // v12: igual que el carro: si un encoder casi no cuenta, usa solo el otro
+  const l = Math.abs(s.l || 0), r = Math.abs(s.r || 0);
+  if (l < 0.2 * r) return Math.round(r);
+  if (r < 0.2 * l) return Math.round(l);
+  return Math.round((l + r) / 2);
+};
 const load = (k, d) => { try { const v = JSON.parse(localStorage.getItem(k)); return v ?? d; } catch (e) { return d; } };
 const store = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
 const errText = (e) => { const t = e && (e.message || e.name); return t ? String(t) : (e != null && String(e) !== "undefined" && String(e) !== "[object Object]" ? String(e) : "Bluefy no dio detalles"); };
@@ -580,13 +586,19 @@ function onLine(line) {
     case "T":
       $("liveL").textContent = mm(+p[1]);
       $("liveR").textContent = mm(+p[2]);
-      if (replay && !replay.paused) replay.prog = Math.round((+p[1] + +p[2]) / 2);   // avance del paso actual (v7)
+      if (replay && !replay.paused) {                       // avance del paso actual (v7)
+        const pg = avg({ l: +p[1], r: +p[2] });
+        if (replay.toFn && pg > (replay.prog || 0)) { clearTimeout(replay.timer); replay.timer = setTimeout(replay.toFn, 10000); }   // v12: sin limite mientras avance
+        replay.prog = pg;
+      }
       break;
     case "E": {                                            // termino un movimiento manual
       if (pend) { clearTimeout(pend.timer); pend = null; }           // llego el dato real: no se guarda por tiempo
       if (curMove && curMove.d === p[1]) curMove.gotE = true;      // (L/R: el carro termina el giro solo)
       const st = { d: p[1], v: +p[2], l: +p[3], r: +p[4], ms: +p[5] };
       if (!NAMES[st.d] || isNaN(st.l) || isNaN(st.r)) break;
+      if ((st.d === "F" || st.d === "B") && avg(st) >= MIN_COUNTS && (Math.abs(st.l) < 0.2 * Math.abs(st.r) || Math.abs(st.r) < 0.2 * Math.abs(st.l)))
+        toast(`⚠ El encoder ${Math.abs(st.l) < Math.abs(st.r) ? "izquierdo" : "derecho"} casi no contó: revisa sus cables`, "warn");
       $("liveL").textContent = mm(st.l);
       $("liveR").textContent = mm(st.r);
       if ($("rec").checked && avg(st) >= MIN_COUNTS && !replay) {
@@ -696,11 +708,13 @@ document.querySelectorAll(".pad .dir").forEach((b) =>
   b.addEventListener("pointerdown", (e) => { e.preventDefault(); drive(b.dataset.d); }));
 $("btnStop").addEventListener("pointerdown", (e) => { e.preventDefault(); stopAll(); });
 
+const pwmPct = (v) => 45 + 5 * v;                      // v12: igual que el carro (1 = 50 %, 5 = 70 %, 9 = 90 %)
+const showSpeed = () => { $("speedVal").innerHTML = `${speed}<small>${pwmPct(speed)}%</small>`; };
 $("speed").value = speed;
-$("speedVal").textContent = speed;
+showSpeed();
 $("speed").addEventListener("input", () => {
   speed = +$("speed").value;
-  $("speedVal").textContent = speed;
+  showSpeed();
   store("carro_vel", speed);
 });
 $("speed").addEventListener("change", () => { if (moving && connected) send(`<${moving}${speed}>`); });
@@ -794,7 +808,7 @@ function renderAutoSteps() {
       if (i < run.i) {
         const r = run.res[i];
         li.className = "ok"; ic = "✓";
-        extra = (r && !s.t && s.d !== "W") ? `<small>hizo izq ${mm(r.l)} · der ${mm(r.r)} mm (error ${mm(Math.round((r.l + r.r) / 2) - avg(s))} mm)</small>` : "";
+        extra = (r && !s.t && s.d !== "W") ? `<small>hizo izq ${mm(r.l)} · der ${mm(r.r)} mm (error ${mm(avg(r) - avg(s))} mm)</small>` : "";
       } else if (i === run.i && run === replay) { li.className = "run"; ic = "▸"; }
       else if (i === run.i && run.bad) { li.className = "bad"; ic = "✕"; }
     }
@@ -1043,6 +1057,10 @@ function regCarEvent(p) {
     log(`↩ regresó a la línea: faltan ${p[2]} mm`);
     toast("↩ Obstáculo rodeado: sigue la ruta");
     if (replay) autoStatus(`Paso ${replay.i + 1}: retomando la ruta (faltan ${(+p[2] / 10).toFixed(0)} cm)`);
+  } else if (t === "ATORADO") {                          // v12: I,ATORADO,paso,mm,t
+    regEvent(+p[4], "ATORADO", "paso " + p[2] + ": las llantas dejaron de avanzar 3 s (iba en " + p[3] + " mm)");
+    log("⚠ paso " + p[2] + ": las llantas no avanzan (atorado), sigue con el siguiente");
+    toast("⚠ El carro se atoró: las llantas no avanzan", "warn");
   } else if (t === "DESVIO_FALLO") {
     regEvent(+p[3], "DESVIO_FALLO", "no pudo rodear el obstáculo (desvío #" + p[2] + ")");
   }
