@@ -67,6 +67,9 @@
   ol.steps .txt small{display:block;color:var(--muted);font-size:12px}
   ol.steps .del{padding:4px 10px;background:transparent;color:var(--muted)}
   ol.steps li.run{background:#1b2a44;border-radius:8px}
+  #autoSteps li{cursor:pointer}
+  ol.steps li.start{outline:2px solid var(--accent);border-radius:8px}
+  ol.steps li.skip{opacity:.4}
   ol.steps li.ok .ic{color:#6be3a6}
   ol.steps li.bad .ic{color:#ff8a8d}
   .empty{color:var(--muted);font-size:14px;padding:10px 2px}
@@ -109,7 +112,7 @@
 <body>
 
 <header>
-  <h1>Carro<small>HM-10 · Bluefy · v12</small></h1>
+  <h1>Carro<small>HM-10 · Bluefy · v13</small></h1>
   <div id="status" class="pill">Desconectado</div>
 </header>
 <div class="connect">
@@ -796,16 +799,23 @@ function renderRouteSel(select) {
   renderAutoSteps();
 }
 
+let startFrom = 0;                                     // v13: paso donde empieza la repeticion (0 = el primero)
+function playLabel() {
+  $("btnPlay").textContent = startFrom > 0 ? `▶ Repetir desde el paso ${startFrom + 1}` : "▶ Repetir ruta";
+}
 function renderAutoSteps() {
   const run = replay || (lastRun && lastRun.key === $("routeSel").value ? lastRun : null);
   const steps = run ? run.steps : selectedSteps();
+  if (!run && startFrom >= steps.length) startFrom = 0;
+  playLabel();
   const ol = $("autoSteps");
   ol.innerHTML = steps.length ? "" : `<li class="empty">Esta ruta no tiene pasos.</li>`;
   steps.forEach((s, i) => {
     const li = document.createElement("li");
     let ic = ARROWS[s.d], extra = "";
     if (run) {
-      if (i < run.i) {
+      if (i < (run.start || 0)) { li.className = "skip"; ic = "–"; }
+      else if (i < run.i) {
         const r = run.res[i];
         li.className = "ok"; ic = "✓";
         extra = (r && !s.t && s.d !== "W") ? `<small>hizo izq ${mm(r.l)} · der ${mm(r.r)} mm (error ${mm(avg(r) - avg(s))} mm)</small>` : "";
@@ -819,12 +829,23 @@ function renderAutoSteps() {
     } else
     li.innerHTML = `<span class="n">${i + 1}</span><span class="ic">${ic}</span>
       <span class="txt">${NAMES[s.d]} · vel ${s.v} · ${stepShort(s)}${extra || (s.t ? "<small>por tiempo</small>" : `<small>izq ${mm(s.l)} · der ${mm(s.r)} mm</small>`)}</span>`;
+    if (!run || !replay) {                                // v13: toca un paso para empezar desde ahi
+      if (!run && i < startFrom) li.classList.add("skip");
+      if (!run && i === startFrom && startFrom > 0) li.classList.add("start");
+      li.onclick = () => {
+        if (replay) return;
+        lastRun = null;
+        startFrom = (startFrom === i) ? 0 : i;
+        autoStatus(startFrom > 0 ? `Empieza en el paso ${startFrom + 1}. Pon el carro en ese punto, viendo hacia donde iba ahí. Toca el mismo paso para quitarlo.` : "");
+        renderAutoSteps();
+      };
+    }
     ol.appendChild(li);
   });
   const cur = ol.querySelector(".run");
   if (cur) cur.scrollIntoView({ block: "nearest" });
 }
-$("routeSel").onchange = () => { lastRun = null; autoStatus(""); renderAutoSteps(); };
+$("routeSel").onchange = () => { lastRun = null; startFrom = 0; autoStatus(""); renderAutoSteps(); };
 
 function renderSaved() {
   const ul = $("saved");
@@ -860,11 +881,14 @@ function playRoute() {
   if (replay) return;
   const steps = selectedSteps().map((s) => ({ ...s }));
   if (!steps.length) { toast("La ruta no tiene pasos", "warn"); return; }
-  replay = { key: $("routeSel").value, steps, i: 0, res: [], timer: null };
+  const st0 = (startFrom > 0 && startFrom < steps.length) ? startFrom : 0;
+  replay = { key: $("routeSel").value, steps, i: st0, start: st0, res: [], timer: null };
   lastRun = null;
+  startFrom = 0;
   setMoving(null);
   $("btnPlay").disabled = true;
-  autoStatus("Repitiendo…");
+  if (st0) { log(`▶ empieza desde el paso ${st0 + 1} de ${steps.length}`); regEvent("", "RUTA_DESDE_PASO", "paso " + (st0 + 1) + " de " + steps.length); }
+  autoStatus(st0 ? `Repitiendo desde el paso ${st0 + 1}…` : "Repitiendo…");
   sendStep();
 }
 
